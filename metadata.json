@@ -1,0 +1,6 @@
+{
+  "name": "OmniStream TV",
+  "description": "Modern responsive Live TV player and playlist manager with instant channel switching, EPG schedule guide, and HLS streaming.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
