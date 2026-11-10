@@ -35,6 +35,7 @@ export interface EPGProgram {
   durationMinutes: number;
   progressPercent: number; // 0 - 100
   isLive: boolean;
+  poster?: string;
 }
 
 export interface StreamDiagnostics {
@@ -65,4 +66,10 @@ export interface SiteConfig {
   lastSyncStatus?: 'ok' | 'error';
   lastSyncMessage?: string;
   cachedChannelCount?: number;
+  // Branding
+  appName?: string;
+  appLogo?: string;
+  appTagline?: string;
+  primaryColor?: string;
+  accentColor?: string;
 }

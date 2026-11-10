@@ -14,6 +14,8 @@ interface YouTubeTopBarProps {
   onToggleSidebar: () => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  appName?: string;
+  appLogo?: string;
   onOpenPlaylistModal: () => void;
   onOpenAdmin: () => void;
   onToggleRemote: () => void;
@@ -42,6 +44,8 @@ export const YouTubeTopBar: React.FC<YouTubeTopBarProps> = ({
   isRemoteOpen,
   onOpenShortcuts,
   onGoHome,
+  appName,
+  appLogo,
 }) => {
   return (
     <header className="h-14 px-4 bg-[#0a0204]/75 backdrop-blur-xl border-b border-rose-950/40 sticky top-0 z-30 flex items-center justify-between gap-4 select-none shadow-sm shadow-rose-950/30">
@@ -50,7 +54,7 @@ export const YouTubeTopBar: React.FC<YouTubeTopBarProps> = ({
         <button
           onClick={onToggleSidebar}
           title="Guide menu"
-          className="p-2 rounded-full hover:bg-neutral-850 text-neutral-300 hover:text-white transition-colors"
+          className="hidden md:inline-flex p-2 rounded-full hover:bg-neutral-850 text-neutral-300 hover:text-white transition-colors"
         >
           <Menu className="w-5 h-5" />
         </button>
@@ -59,17 +63,18 @@ export const YouTubeTopBar: React.FC<YouTubeTopBarProps> = ({
           onClick={onGoHome}
           className="flex items-center gap-1.5 group cursor-pointer focus:outline-none"
         >
-          {/* YouTube Red Play Icon */}
-          <div className="w-8 h-6 bg-rose-600 rounded-lg flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
-            <div className="w-0 h-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-white ml-0.5" />
-          </div>
+          {/* App Logo or default play icon */}
+          {appLogo ? (
+            <img loading="lazy" decoding="async" src={appLogo} alt={appName || 'App'} className="w-8 h-6 object-contain" />
+          ) : (
+            <div className="w-8 h-6 bg-rose-600 rounded-lg flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
+              <div className="w-0 h-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-white ml-0.5" />
+            </div>
+          )}
 
           <div className="flex items-baseline gap-1">
             <span className="text-base sm:text-lg font-black tracking-tighter text-white">
-              OmniStream
-            </span>
-            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest font-mono">
-              TV
+              {appName || 'OmniStream'}
             </span>
           </div>
         </button>

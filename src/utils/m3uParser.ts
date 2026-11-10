@@ -96,7 +96,7 @@ export function parseM3U(content: string, playlistName = 'Custom Playlist', play
       const channelNum = currentInfo?.channelNumber || channelCounter;
 
       const channel: Channel = {
-        id: currentInfo?.tvgId ? `${currentInfo.tvgId}-${channelCounter}` : `ch-${channelCounter}-${Date.now().toString(36)}`,
+        id: currentInfo?.tvgId ? `${currentInfo.tvgId}-${channelCounter}` : `ch-${channelCounter}`,
         name: channelName,
         url: streamUrl,
         logo: currentInfo?.logo,

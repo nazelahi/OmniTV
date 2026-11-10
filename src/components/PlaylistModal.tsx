@@ -64,10 +64,11 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
       let response: Response;
       try {
         response = await fetch(targetUrl);
+        if (!response.ok) throw new Error('direct fetch failed');
       } catch (networkErr) {
-        // If direct fetch is blocked by CORS, try public CORS proxies
-        const corsProxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-        response = await fetch(corsProxyUrl);
+        // If direct fetch is blocked by CORS, fall back to our own backend proxy
+        // (avoids relying on a third-party CORS proxy service)
+        response = await fetch(`/api/fetch-playlist?url=${encodeURIComponent(targetUrl)}`);
       }
 
       if (!response.ok) {
@@ -180,7 +181,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-neutral-900 border border-neutral-700/80 rounded-2xl max-w-xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-neutral-800 flex items-center justify-between">

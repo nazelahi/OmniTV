@@ -66,7 +66,7 @@ export const VirtualRemote: React.FC<VirtualRemoteProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 w-72 bg-neutral-900/95 backdrop-blur-xl border border-neutral-700/80 rounded-3xl p-5 shadow-2xl flex flex-col gap-4 text-white select-none animate-in fade-in slide-in-from-bottom-6 duration-200">
+    <div className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-40 w-[calc(100vw-2rem)] sm:w-72 max-w-xs bg-neutral-900/95 backdrop-blur-xl border border-neutral-700/80 rounded-3xl p-4 sm:p-5 shadow-2xl flex flex-col gap-4 text-white select-none animate-in fade-in slide-in-from-bottom-6 duration-200">
       {/* Remote Top Bar */}
       <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
         <div className="flex items-center gap-2">

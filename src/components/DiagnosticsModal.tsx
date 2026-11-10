@@ -26,7 +26,7 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-neutral-900 border border-neutral-700 rounded-2xl max-w-lg w-full shadow-2xl p-6 text-white">
         <div className="flex items-center justify-between border-b border-neutral-800 pb-3 mb-4">
           <div className="flex items-center gap-2.5">

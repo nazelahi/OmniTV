@@ -10,7 +10,7 @@ import {
   SkipBack,
   SkipForward,
 } from 'lucide-react';
-import { Channel, StreamDiagnostics } from '../types/playlist';
+import { Channel, StreamDiagnostics, EPGProgram } from '../types/playlist';
 import { getCurrentAndNextProgram } from '../utils/epgGenerator';
 import { VideoPlayer } from './VideoPlayer';
 import { ChannelList } from './ChannelList';
@@ -29,6 +29,7 @@ interface WatchScreenProps {
   onOpenDiagnostics: () => void;
   setStreamDiagnostics: (diag: StreamDiagnostics) => void;
   recentChannels: Channel[];
+  epgData?: Map<string, EPGProgram[]> | null;
 }
 
 export const WatchScreen: React.FC<WatchScreenProps> = ({
@@ -45,8 +46,9 @@ export const WatchScreen: React.FC<WatchScreenProps> = ({
   onOpenDiagnostics,
   setStreamDiagnostics,
   recentChannels,
+  epgData,
 }) => {
-  const { current: currentProgram, next: nextProgram } = getCurrentAndNextProgram(channel);
+  const { current: currentProgram, next: nextProgram } = getCurrentAndNextProgram(channel, epgData);
 
   return (
     <div className="flex flex-col gap-4 pb-12 select-none animate-in fade-in duration-200">
@@ -88,17 +90,18 @@ export const WatchScreen: React.FC<WatchScreenProps> = ({
               onToggleTheaterMode={onToggleTheaterMode}
               onOpenDiagnostics={onOpenDiagnostics}
               setStreamDiagnostics={setStreamDiagnostics}
+              epgData={epgData}
             />
           </div>
 
           {/* Under-Player Metadata & Channel Bar (like YouTube) */}
           <div className="bg-gradient-to-br from-neutral-900/80 via-[#160306]/75 to-black/85 border border-rose-950/60 rounded-2xl p-4 sm:p-5 flex flex-col gap-4 backdrop-blur-md shadow-xl shadow-rose-950/20">
             {/* Channel info and quick actions */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-neutral-800/70">
+            <div className="flex flex-row items-center justify-between gap-3 pb-4 border-b border-neutral-800/70 flex-wrap">
               <div className="flex items-center gap-3.5 min-w-0">
-                <div className="w-12 h-12 rounded-xl bg-neutral-950 border border-neutral-800 p-1 flex items-center justify-center shrink-0 shadow-inner">
+                <div className="w-9 h-9 rounded-lg bg-neutral-950 border border-neutral-800 p-1 flex items-center justify-center shrink-0 shadow-inner">
                   {channel.logo ? (
-                    <img
+                    <img loading="lazy" decoding="async"
                       src={channel.logo}
                       alt={channel.name}
                       referrerPolicy="no-referrer"
@@ -117,7 +120,7 @@ export const WatchScreen: React.FC<WatchScreenProps> = ({
                     <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-rose-600 text-white">
                       CH {channel.channelNumber.toString().padStart(2, '0')}
                     </span>
-                    <h2 className="text-base sm:text-lg font-bold text-white truncate">
+                    <h2 className="text-sm sm:text-base font-bold text-white truncate">
                       {channel.name}
                     </h2>
                   </div>
@@ -134,43 +137,43 @@ export const WatchScreen: React.FC<WatchScreenProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <div className="flex items-center gap-1.5 justify-end">
                 <button
                   onClick={onPrevChannel}
                   title="Previous Channel"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xl text-xs font-semibold transition-colors"
+                  className="flex items-center gap-1 px-2 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg text-[11px] font-semibold transition-colors"
                 >
-                  <SkipBack className="w-3.5 h-3.5" />
+                  <SkipBack className="w-3 h-3" />
                   <span>Prev</span>
                 </button>
 
                 <button
                   onClick={onNextChannel}
                   title="Next Channel"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-xl text-xs font-semibold transition-colors"
+                  className="flex items-center gap-1 px-2 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg text-[11px] font-semibold transition-colors"
                 >
                   <span>Next</span>
-                  <SkipForward className="w-3.5 h-3.5" />
+                  <SkipForward className="w-3 h-3" />
                 </button>
 
                 <button
                   onClick={() => onToggleFavorite(channel.id)}
                   title={channel.isFavorite ? 'Remove Favorite' : 'Save Favorite'}
-                  className={`p-2 rounded-xl border transition-colors ${
+                  className={`p-1.5 rounded-lg border transition-colors ${
                     channel.isFavorite
                       ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
                       : 'bg-neutral-800 text-neutral-400 border-neutral-700/60 hover:text-white'
                   }`}
                 >
-                  <Sparkles className="w-4 h-4 fill-current" />
+                  <Sparkles className="w-3.5 h-3.5 fill-current" />
                 </button>
 
                 <button
                   onClick={onOpenDiagnostics}
                   title="Stream Diagnostics"
-                  className="p-2 rounded-xl bg-neutral-800 text-neutral-400 border border-neutral-700/60 hover:text-white transition-colors"
+                  className="p-1.5 rounded-lg bg-neutral-800 text-neutral-400 border border-neutral-700/60 hover:text-white transition-colors"
                 >
-                  <Activity className="w-4 h-4" />
+                  <Activity className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
@@ -196,13 +199,7 @@ export const WatchScreen: React.FC<WatchScreenProps> = ({
                   {currentProgram.description}
                 </p>
 
-                {/* Progress bar */}
-                <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-1">
-                  <div
-                    className="bg-rose-500 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${currentProgram.progressPercent}%` }}
-                  />
-                </div>
+
               </div>
             )}
           </div>
@@ -240,13 +237,14 @@ export const WatchScreen: React.FC<WatchScreenProps> = ({
         </div>
 
         {/* Right Column: YouTube-style "Channel Switcher / Up Next" Drawer */}
-        <div className={`${isTheaterMode ? 'w-full h-[650px]' : 'lg:col-span-4 xl:col-span-4 h-[650px] lg:h-auto'}`}>
+        <div className={`${isTheaterMode ? 'w-full h-[60vh]' : 'lg:col-span-4 xl:col-span-4 h-[400px] sm:h-[500px] lg:h-auto'}`}>
           <ChannelList
             channels={channels}
             activeChannel={channel}
             onSelectChannel={onSelectChannel}
             onToggleFavorite={onToggleFavorite}
             groups={groups}
+            epgData={epgData}
           />
         </div>
       </div>

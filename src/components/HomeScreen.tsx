@@ -1,14 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Play,
   Tv,
-  Clock,
   Sparkles,
-  CheckCircle2,
   LayoutGrid,
   Grid3X3,
 } from 'lucide-react';
-import { Channel } from '../types/playlist';
+import { Channel, EPGProgram } from '../types/playlist';
 import { getCurrentAndNextProgram } from '../utils/epgGenerator';
 
 interface HomeScreenProps {
@@ -21,6 +19,8 @@ interface HomeScreenProps {
   selectedCategory: string;
   onSelectCategory: (cat: string) => void;
   searchQuery: string;
+  onSearchChange?: (query: string) => void;
+  epgData?: Map<string, EPGProgram[]> | null;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -33,11 +33,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   selectedCategory,
   onSelectCategory,
   searchQuery,
+  onSearchChange,
+  epgData,
 }) => {
   const [density, setDensity] = useState<'compact' | 'normal'>('compact');
-
-  // EPG programs for the featured hero channel
-  const { current: currentProgram, next: nextProgram } = getCurrentAndNextProgram(featuredChannel);
 
   // Favorites count
   const favoritesCount = useMemo(() => {
@@ -56,6 +55,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return list;
   }, [groups, favoritesCount]);
 
+  // Precompute current EPG program per channel to avoid regenerating schedules on every render
+  const programsByChannel = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getCurrentAndNextProgram>>();
+    channels.forEach((ch) => {
+      map.set(ch.id, getCurrentAndNextProgram(ch, epgData));
+    });
+    return map;
+  }, [channels, epgData]);
+
   // Filtered channels
   const filteredChannels = useMemo(() => {
     return channels.filter((ch) => {
@@ -71,7 +79,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         const matchesGroup = ch.group.toLowerCase().includes(q);
         const matchesNumber = ch.channelNumber.toString() === q;
         const matchesCountry = ch.country?.toLowerCase().includes(q);
-        return matchesName || matchesGroup || matchesNumber || matchesCountry;
+        const progTitle = programsByChannel.get(ch.id)?.current?.title?.toLowerCase() || '';
+        const matchesProgram = progTitle.includes(q);
+        return matchesName || matchesGroup || matchesNumber || matchesCountry || matchesProgram;
       }
 
       return true;
@@ -80,10 +90,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   return (
     <div className="flex flex-col gap-5 select-none">
+      {/* Mobile search bar */}
+      <div className="md:hidden relative">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => onSearchChange?.(e.target.value)}
+          placeholder="Search channels..."
+          className="w-full bg-neutral-900 border border-neutral-700 rounded-full py-2 pl-4 pr-9 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500 transition-colors"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => onSearchChange?.('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
       {/* ─────────────────────────────────────────────────────────────
           1. YOUTUBE-STYLE TOP FILTER CHIPS BAR
       ───────────────────────────────────────────────────────────── */}
-      <div className="sticky top-14 z-10 bg-neutral-950/95 backdrop-blur-md -mx-4 px-4 py-2 flex items-center justify-between gap-3 overflow-x-auto scrollbar-none border-b border-neutral-800/60">
+      <div className="sticky top-0 z-10 bg-neutral-950/95 backdrop-blur-md -mx-4 px-4 py-2 flex items-center justify-between gap-3 overflow-x-auto scrollbar-none border-b border-neutral-800/60">
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
           {categoryChips.map((chip) => {
             const isActive = selectedCategory === chip;
@@ -139,116 +168,64 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           2. SLIM & CLEAN FEATURED HERO CARD (EPG SPOTLIGHT)
       ───────────────────────────────────────────────────────────── */}
       {!searchQuery && selectedCategory === 'All' && (
-        <section className="relative rounded-2xl bg-gradient-to-r from-rose-950/65 via-neutral-950/80 to-[#140205]/90 border border-rose-800/40 shadow-xl shadow-rose-950/30 overflow-hidden p-4 sm:p-5 backdrop-blur-md">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
-            {/* Banner Left Details */}
-            <div className="lg:col-span-8 flex flex-col justify-between">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-600 text-white font-bold text-[9px] uppercase tracking-wider">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                  FEATURED LIVE
-                </span>
-                <span className="text-xs text-neutral-400 font-medium">
-                  {featuredChannel.group}
-                </span>
-                {featuredChannel.country && (
-                  <>
-                    <span className="text-neutral-600">·</span>
-                    <span className="text-xs text-neutral-400">{featuredChannel.country}</span>
-                  </>
-                )}
-              </div>
-
-              {/* Station Wordmark */}
-              <div className="flex items-center gap-2.5 mb-1.5">
-                <span className="font-mono text-[11px] font-bold text-neutral-300 bg-neutral-800 px-2 py-0.5 rounded">
-                  CH {featuredChannel.channelNumber.toString().padStart(2, '0')}
-                </span>
-                <h3 className="text-xs font-semibold text-neutral-300">
-                  {featuredChannel.name}
-                </h3>
-              </div>
-
-              {/* Featured Show Title */}
-              <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight leading-snug mb-1.5">
-                {currentProgram?.title || 'Continuous Global Live Broadcast'}
-              </h2>
-
-              <p className="text-xs text-neutral-300 line-clamp-1 max-w-2xl mb-3">
-                {currentProgram?.description || 'Broadcasting in 1080p full high-definition streaming.'}
-              </p>
-
-              {/* EPG Progress Bar */}
-              {currentProgram && (
-                <div className="max-w-md mb-3.5">
-                  <div className="flex items-center justify-between text-[10px] text-neutral-400 font-mono mb-1">
-                    <span>
-                      {new Date(currentProgram.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -{' '}
-                      {new Date(currentProgram.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <span>{currentProgram.progressPercent}% elapsed</span>
-                  </div>
-                  <div className="w-full bg-neutral-800 h-1 rounded-full overflow-hidden">
-                    <div
-                      className="bg-rose-500 h-full rounded-full transition-all duration-300"
-                      style={{ width: `${currentProgram.progressPercent}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Watch Now Button */}
-              <div className="flex items-center gap-2.5">
-                <button
-                  onClick={() => onWatchChannel(featuredChannel)}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-bold text-xs rounded-full transition-all shadow-md shadow-rose-900/30 hover:scale-105"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Watch Live</span>
-                </button>
-
-                <button
-                  onClick={onGoToEPG}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white font-semibold text-xs rounded-full border border-neutral-700 transition-colors"
-                >
-                  <Clock className="w-3 h-3 text-neutral-400" />
-                  <span>TV Guide</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Banner Right Preview Thumbnail Card (Click to open) */}
-            <div
-              onClick={() => onWatchChannel(featuredChannel)}
-              className="lg:col-span-4 group relative h-36 rounded-xl bg-neutral-950 border border-neutral-800 overflow-hidden cursor-pointer shadow-md flex items-center justify-center p-4 transition-all hover:border-neutral-700"
+        <section className="rounded-2xl border border-rose-950/40 bg-neutral-950/40 backdrop-blur-md p-3 sm:p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              Featured Tonight
+            </h3>
+            <button
+              onClick={onGoToEPG}
+              className="text-[11px] font-semibold text-rose-400 hover:text-rose-300 transition-colors"
             >
-              <div className="w-full h-full flex items-center justify-center">
-                {featuredChannel.logo ? (
-                  <img
-                    src={featuredChannel.logo}
-                    alt={featuredChannel.name}
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLElement).style.display = 'none';
-                    }}
-                    className="max-w-[80%] max-h-[75%] object-contain drop-shadow-md"
-                  />
-                ) : (
-                  <Tv className="w-10 h-10 text-neutral-400" />
-                )}
-              </div>
-
-              {/* Play Overlay */}
-              <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 flex items-center justify-center transition-colors">
-                <div className="w-10 h-10 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                  <Play className="w-4 h-4 fill-current ml-0.5" />
-                </div>
-              </div>
-
-              <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/80 font-mono text-[9px] font-bold text-rose-400">
-                LIVE
-              </div>
-            </div>
+              Full Guide →
+            </button>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none snap-x">
+            {channels.map((ch) => {
+              const current = programsByChannel.get(ch.id)?.current ?? null;
+              const upcoming = programsByChannel.get(ch.id)?.next ?? null;
+              const prog = upcoming ?? current; // show upcoming program poster/title
+              const poster = prog?.poster; // program poster only; no logo masquerading as a thumbnail
+              return (
+                <button
+                  key={ch.id}
+                  onClick={() => onWatchChannel(ch)}
+                  className="shrink-0 snap-start w-64 sm:w-72 rounded-xl bg-neutral-900/60 border border-neutral-800/70 hover:border-rose-600/60 overflow-hidden transition-colors text-left flex flex-row"
+                >
+                  <div className="relative w-24 sm:w-28 shrink-0 aspect-video bg-neutral-950/60 flex items-center justify-center overflow-hidden">
+                    {poster ? (
+                      <img loading="lazy" decoding="async"
+                        src={poster}
+                        alt={prog?.title || ch.name}
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLElement).style.display = 'none';
+                        }}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Tv className="w-8 h-8 text-neutral-400" />
+                    )}
+                    <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/70 font-mono text-[8px] font-bold text-rose-400">
+                      CH {ch.channelNumber.toString().padStart(2, '0')}
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0 p-2.5 flex flex-col gap-1 justify-center">
+                    <p className="text-xs font-bold text-white truncate leading-tight">
+                      {prog?.title || `${ch.name} — Live`}
+                    </p>
+                    <p className="text-[10px] text-neutral-400 truncate">{ch.name}</p>
+                    {prog && (
+                      <p className="text-[9px] text-neutral-500 font-mono">
+                        {new Date(prog.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -{' '}
+                        {new Date(prog.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </section>
       )}
@@ -279,7 +256,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }`}
           >
             {filteredChannels.map((ch) => {
-              const { current: prog } = getCurrentAndNextProgram(ch);
+              const prog = programsByChannel.get(ch.id)?.current ?? null;
 
               return (
                 <div
@@ -291,7 +268,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   <div className="relative aspect-video rounded-xl bg-gradient-to-b from-neutral-900/90 via-[#180407]/80 to-black/95 border border-rose-950/60 overflow-hidden shadow-xs group-hover:shadow-lg group-hover:shadow-rose-950/40 group-hover:border-rose-600/70 transition-all flex items-center justify-center p-3">
                     {/* Centered Large Channel Logo */}
                     {ch.logo ? (
-                      <img
+                      <img loading="lazy" decoding="async"
                         src={ch.logo}
                         alt={ch.name}
                         referrerPolicy="no-referrer"
@@ -335,18 +312,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       <Sparkles className="w-3 h-3 fill-current" />
                     </button>
 
-                    {/* Bottom Right: Red LIVE Badge */}
-                    <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1 px-1.5 py-0.2 rounded bg-rose-600 text-white font-mono text-[9px] font-bold tracking-wider uppercase">
-                      <span className="w-1 h-1 rounded-full bg-white animate-pulse" />
-                      LIVE
-                    </div>
-
                     {/* Hover Play Overlay */}
                     <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                       <div className="w-8 h-8 rounded-full bg-rose-600/90 text-white flex items-center justify-center shadow-md">
                         <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
                       </div>
                     </div>
+
                   </div>
 
                   {/* Compact Video Info Row */}
@@ -354,7 +326,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     {/* Channel Avatar */}
                     <div className="w-7 h-7 rounded-full bg-neutral-900 border border-neutral-800 p-0.5 flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
                       {ch.logo ? (
-                        <img
+                        <img loading="lazy" decoding="async"
                           src={ch.logo}
                           alt=""
                           referrerPolicy="no-referrer"
@@ -374,16 +346,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <div className="min-w-0 flex-1">
                       {/* Program Title */}
                       <h4 className="text-xs font-semibold text-white truncate leading-tight group-hover:text-rose-400 transition-colors">
-                        {prog?.title || `${ch.name} Live`}
+                        {prog?.title || ch.name}
                       </h4>
 
-                      {/* Channel Name */}
-                      <div className="flex items-center gap-1 text-[11px] text-neutral-400 truncate mt-0.5">
-                        <span className="truncate hover:text-white">
-                          {ch.name}
-                        </span>
-                        <CheckCircle2 className="w-3 h-3 text-neutral-500 shrink-0" />
-                      </div>
+
 
                       {/* Category */}
                       <div className="text-[10px] text-neutral-500 truncate">

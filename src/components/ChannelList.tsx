@@ -10,7 +10,7 @@ import {
   Radio,
   Tv,
 } from 'lucide-react';
-import { Channel } from '../types/playlist';
+import { Channel, EPGProgram } from '../types/playlist';
 import { getCurrentAndNextProgram } from '../utils/epgGenerator';
 
 interface ChannelListProps {
@@ -19,6 +19,7 @@ interface ChannelListProps {
   onSelectChannel: (channel: Channel) => void;
   onToggleFavorite: (channelId: string) => void;
   groups: string[];
+  epgData?: Map<string, EPGProgram[]> | null;
 }
 
 export const ChannelList: React.FC<ChannelListProps> = ({
@@ -27,11 +28,19 @@ export const ChannelList: React.FC<ChannelListProps> = ({
   onSelectChannel,
   onToggleFavorite,
   groups,
+  epgData,
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedGroup, setSelectedGroup] = useState<string>('All');
+  const [selectedGroup, setSelectedGroup] = useState<string>(activeChannel?.group || 'All');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const activeItemRef = useRef<HTMLButtonElement | null>(null);
+
+  // Show related channels (same group) when the active channel changes
+  useEffect(() => {
+    if (activeChannel?.group) {
+      setSelectedGroup(activeChannel.group);
+    }
+  }, [activeChannel?.id]);
 
   // Auto-scroll active channel into view on mount or change
   useEffect(() => {
@@ -60,7 +69,9 @@ export const ChannelList: React.FC<ChannelListProps> = ({
         const matchesGroup = ch.group.toLowerCase().includes(q);
         const matchesNumber = ch.channelNumber.toString() === q;
         const matchesCountry = ch.country?.toLowerCase().includes(q);
-        return matchesName || matchesGroup || matchesNumber || matchesCountry;
+        const progTitle = programsByChannel.get(ch.id)?.current?.title?.toLowerCase() || '';
+        const matchesProgram = progTitle.includes(q);
+        return matchesName || matchesGroup || matchesNumber || matchesCountry || matchesProgram;
       }
 
       return true;
@@ -70,6 +81,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({
   const favoritesCount = useMemo(() => {
     return channels.filter((ch) => ch.isFavorite).length;
   }, [channels]);
+
+  const programsByChannel = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getCurrentAndNextProgram>>();
+    channels.forEach((ch) => {
+      map.set(ch.id, getCurrentAndNextProgram(ch, epgData));
+    });
+    return map;
+  }, [channels, epgData]);
 
   // Category tabs list
   const categoryTabs = useMemo(() => {
@@ -182,7 +201,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({
         ) : viewMode === 'list' ? (
           filteredChannels.map((ch) => {
             const isActive = ch.id === activeChannel.id;
-            const { current: nowProg } = getCurrentAndNextProgram(ch);
+            const nowProg = programsByChannel.get(ch.id)?.current ?? null;
 
             return (
               <button
@@ -209,7 +228,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({
                 {/* Logo or monogram */}
                 <div className="w-10 h-10 rounded-lg bg-neutral-900 border border-neutral-800 p-1 flex items-center justify-center shrink-0 overflow-hidden">
                   {ch.logo ? (
-                    <img
+                    <img loading="lazy" decoding="async"
                       src={ch.logo}
                       alt={ch.name}
                       referrerPolicy="no-referrer"
@@ -303,7 +322,7 @@ export const ChannelList: React.FC<ChannelListProps> = ({
 
                   <div className="w-full h-14 rounded-lg bg-neutral-900 border border-neutral-800 p-1.5 flex items-center justify-center my-1">
                     {ch.logo ? (
-                      <img
+                      <img loading="lazy" decoding="async"
                         src={ch.logo}
                         alt={ch.name}
                         referrerPolicy="no-referrer"

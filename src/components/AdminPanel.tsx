@@ -51,14 +51,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 }) => {
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('omnistream_admin_auth') === 'true';
+    return (
+      sessionStorage.getItem('omnistream_admin_auth') === 'true' &&
+      !!sessionStorage.getItem('omnistream_admin_token')
+    );
   });
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [isVerifyingPin, setIsVerifyingPin] = useState<boolean>(false);
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'playlist' | 'channels' | 'settings'>('playlist');
+  const [activeTab, setActiveTab] = useState<'playlist' | 'channels' | 'settings' | 'branding'>('playlist');
 
   // Form state
   const [playlistUrl, setPlaylistUrl] = useState<string>('');
@@ -85,6 +88,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [newChGroup, setNewChGroup] = useState<string>('Custom');
   const [newChNumber, setNewChNumber] = useState<number>(100);
 
+  // Branding state
+  const [appName, setAppName] = useState<string>('OmniStream TV');
+  const [appLogo, setAppLogo] = useState<string>('');
+  const [appTagline, setAppTagline] = useState<string>('Live TV');
+  const [primaryColor, setPrimaryColor] = useState<string>('#e11d48');
+  const [accentColor, setAccentColor] = useState<string>('');
+
   // Fetch current server config on open
   useEffect(() => {
     if (!isOpen) return;
@@ -99,6 +109,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           setAutoRefreshMinutes(data.autoRefreshMinutes || 60);
           setDisabledChannelIds(data.disabledChannelIds || []);
           setCustomChannels(data.customChannels || []);
+          setAppName(data.appName || 'OmniStream TV');
+          setAppLogo(data.appLogo || '');
+          setAppTagline(data.appTagline || 'Live TV');
+          setPrimaryColor(data.primaryColor || '#e11d48');
+          setAccentColor(data.accentColor || '');
         }
       })
       .catch((err) => {
@@ -125,18 +140,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (res.ok && data.success) {
         setIsAuthenticated(true);
         sessionStorage.setItem('omnistream_admin_auth', 'true');
+        if (data.token) {
+          sessionStorage.setItem('omnistream_admin_token', data.token);
+        }
         setPinInput('');
       } else {
         setPinError(data.error || 'Invalid Admin PIN (Default is 1234)');
       }
     } catch {
-      // Fallback local check if server unreachable
-      if (pinInput === '1234') {
-        setIsAuthenticated(true);
-        sessionStorage.setItem('omnistream_admin_auth', 'true');
-      } else {
-        setPinError('Invalid Admin PIN (Default is 1234)');
-      }
+      setPinError('Unable to reach server to verify PIN. Please check your connection.');
     } finally {
       setIsVerifyingPin(false);
     }
@@ -153,9 +165,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setTestResult(null);
 
     try {
+      const token = sessionStorage.getItem('omnistream_admin_token');
       const res = await fetch('/api/test-playlist', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ url: playlistUrl.trim() }),
       });
 
@@ -184,6 +200,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       autoRefreshMinutes,
       disabledChannelIds,
       customChannels,
+      appName: appName.trim() || 'OmniStream TV',
+      appLogo: appLogo.trim(),
+      appTagline: appTagline.trim(),
+      primaryColor: primaryColor.trim() || '#e11d48',
+      accentColor: accentColor.trim(),
     };
 
     if (newAdminPin.trim()) {
@@ -191,9 +212,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
 
     try {
+      const token = sessionStorage.getItem('omnistream_admin_token');
       const res = await fetch('/api/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(payload),
       });
 
@@ -293,7 +318,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
       <div className="bg-neutral-900 border border-neutral-700/80 rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Modal Top Bar */}
         <div className="p-4 sm:p-5 border-b border-neutral-800 flex items-center justify-between bg-neutral-950/40">
@@ -330,10 +355,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <h4 className="text-lg font-bold text-white mb-1">Admin Authentication</h4>
             <p className="text-xs text-neutral-400 max-w-sm mb-6">
               Enter the admin passcode to modify global website playlist settings and channel configurations.
-              <br />
-              <span className="text-neutral-500 mt-1 block">
-                Default PIN: <strong className="text-rose-400 font-mono">1234</strong>
-              </span>
             </p>
 
             <form onSubmit={handleVerifyPin} className="w-full max-w-xs space-y-3">
@@ -409,6 +430,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 <Sliders className="w-3.5 h-3.5 text-neutral-400" />
                 <span>Security & Backup</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('branding')}
+                className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+                  activeTab === 'branding'
+                    ? 'border-rose-500 text-white'
+                    : 'border-transparent text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5 text-rose-500" />
+                <span>Branding</span>
               </button>
             </div>
 
@@ -794,7 +827,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             </span>
                             <div className="w-6 h-6 rounded bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
                               {ch.logo ? (
-                                <img
+                                <img loading="lazy" decoding="async"
                                   src={ch.logo}
                                   alt=""
                                   referrerPolicy="no-referrer"
@@ -900,6 +933,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     )}
                     <span>Sync Now</span>
                   </button>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'branding' && (
+              <div className="p-5 flex-1 overflow-y-auto space-y-4">
+                <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-3">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">App Name</h4>
+                  <input
+                    type="text"
+                    value={appName}
+                    onChange={(e) => setAppName(e.target.value)}
+                    placeholder="OmniStream TV"
+                    className="w-full px-3.5 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-xs text-white"
+                  />
+                </div>
+                <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-3">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">App Tagline</h4>
+                  <input
+                    type="text"
+                    value={appTagline}
+                    onChange={(e) => setAppTagline(e.target.value)}
+                    placeholder="Live TV"
+                    className="w-full px-3.5 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-xs text-white"
+                  />
+                </div>
+                <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-3">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">App Logo URL</h4>
+                  <input
+                    type="url"
+                    value={appLogo}
+                    onChange={(e) => setAppLogo(e.target.value)}
+                    placeholder="https://example.com/logo.png"
+                    className="w-full px-3.5 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-xs text-white font-mono"
+                  />
+                  {appLogo && (
+                    <img loading="lazy" decoding="async" src={appLogo} alt="logo preview" className="w-12 h-12 object-contain bg-neutral-900 rounded-lg p-1" />
+                  )}
+                </div>
+                <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-3">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">Primary Color</h4>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={primaryColor || '#e11d48'}
+                      onChange={(e) => setPrimaryColor(e.target.value)}
+                      className="w-10 h-10 rounded cursor-pointer bg-transparent border-0"
+                    />
+                    <input
+                      type="text"
+                      value={primaryColor}
+                      onChange={(e) => setPrimaryColor(e.target.value)}
+                      placeholder="#e11d48"
+                      className="flex-1 px-3.5 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-xs text-white font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-3">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">Accent Color</h4>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={accentColor || '#f43f5e'}
+                      onChange={(e) => setAccentColor(e.target.value)}
+                      className="w-10 h-10 rounded cursor-pointer bg-transparent border-0"
+                    />
+                    <input
+                      type="text"
+                      value={accentColor}
+                      onChange={(e) => setAccentColor(e.target.value)}
+                      placeholder="#f43f5e (optional)"
+                      className="flex-1 px-3.5 py-2 bg-neutral-900 border border-neutral-700 rounded-xl text-xs text-white font-mono"
+                    />
+                  </div>
                 </div>
               </div>
             )}

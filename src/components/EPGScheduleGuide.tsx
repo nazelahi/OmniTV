@@ -9,6 +9,7 @@ interface EPGScheduleGuideProps {
   onSelectChannel: (channel: Channel) => void;
   onToggleFavorite: (channelId: string) => void;
   epgUrl?: string;
+  epgData?: Map<string, EPGProgram[]> | null;
   onOpenAdmin?: () => void;
 }
 
@@ -18,6 +19,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
   onSelectChannel,
   onToggleFavorite,
   epgUrl,
+  epgData,
   onOpenAdmin,
 }) => {
   const [selectedProgram, setSelectedProgram] = useState<{ program: EPGProgram; channel: Channel } | null>(null);
@@ -155,7 +157,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
 
       {/* Guide Matrix Table Container */}
       <div className="flex-1 overflow-x-auto overflow-y-auto">
-        <div className="min-w-[900px]">
+        <div className="min-w-[720px] sm:min-w-[900px]">
           {/* Timeline Time Header */}
           <div className="flex border-b border-neutral-800 bg-neutral-950/80 sticky top-0 z-20">
             {/* Channel column header */}
@@ -180,7 +182,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
           <div className="divide-y divide-neutral-800/60">
             {filteredChannels.map((channel) => {
               const isActive = channel.id === activeChannel.id;
-              const schedule = getChannelSchedule(channel, now);
+              const schedule = getChannelSchedule(channel, now, epgData);
 
               return (
                 <div
@@ -203,7 +205,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
 
                       <div className="w-8 h-8 rounded bg-neutral-900 border border-neutral-800 p-0.5 flex items-center justify-center shrink-0">
                         {channel.logo ? (
-                          <img
+                          <img loading="lazy" decoding="async"
                             src={channel.logo}
                             alt={channel.name}
                             referrerPolicy="no-referrer"
@@ -303,7 +305,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
 
       {/* Program Details Modal */}
       {selectedProgram && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-neutral-900 border border-neutral-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setSelectedProgram(null)}
@@ -367,7 +369,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
 
       {/* EPG Source & URL Information Modal */}
       {showSourceInfo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150">
           <div className="bg-neutral-900 border border-neutral-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
             <button
               onClick={() => setShowSourceInfo(false)}

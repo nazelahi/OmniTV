@@ -19,7 +19,7 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { Channel, AspectRatio, StreamDiagnostics } from '../types/playlist';
+import { Channel, AspectRatio, StreamDiagnostics, EPGProgram } from '../types/playlist';
 import { getCurrentAndNextProgram } from '../utils/epgGenerator';
 
 interface VideoPlayerProps {
@@ -31,6 +31,7 @@ interface VideoPlayerProps {
   onToggleTheaterMode: () => void;
   onOpenDiagnostics: () => void;
   setStreamDiagnostics: (diag: StreamDiagnostics) => void;
+  epgData?: Map<string, EPGProgram[]> | null;
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -42,6 +43,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onToggleTheaterMode,
   onOpenDiagnostics,
   setStreamDiagnostics,
+  epgData,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -50,9 +52,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isBuffering, setIsBuffering] = useState<boolean>(true);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [volume, setVolume] = useState<number>(0.85);
+  const [volume, setVolume] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('omnistream_volume');
+      return v ? Math.min(1, Math.max(0, parseFloat(v))) : 0.85;
+    } catch {
+      return 0.85;
+    }
+  });
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('fill');
   const [showControls, setShowControls] = useState<boolean>(true);
   const [showOSD, setShowOSD] = useState<boolean>(true);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -62,11 +71,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showAspectMenu, setShowAspectMenu] = useState<boolean>(false);
   const [currentResolution, setCurrentResolution] = useState<string>('Auto');
 
+  // Persist volume
+  useEffect(() => {
+    try {
+      localStorage.setItem('omnistream_volume', String(volume));
+    } catch {}
+  }, [volume]);
+
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const osdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // EPG program info for current channel
-  const { current: currentProgram, next: nextProgram } = getCurrentAndNextProgram(channel);
+  const { current: currentProgram, next: nextProgram } = getCurrentAndNextProgram(channel, epgData);
 
   // Show OSD banner on channel change
   const triggerOSD = useCallback(() => {
@@ -88,6 +104,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 3500);
   };
 
+  // Apply persisted volume to video element
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      video.volume = volume;
+    }
+  }, []);
+
   // Setup HLS / Video playback
   useEffect(() => {
     const video = videoRef.current;
@@ -107,7 +131,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const streamUrl = channel.url;
-    const isHlsStream = streamUrl.includes('.m3u8') || streamUrl.includes('hls');
+    const isHlsStream = /\.m3u8(\?|$)/i.test(streamUrl) || /\/hls\//i.test(streamUrl);
 
     if (isHlsStream && Hls.isSupported()) {
       const hls = new Hls({
@@ -358,10 +382,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
       className={`relative w-full bg-black overflow-hidden select-none flex items-center justify-center rounded-xl border border-neutral-800/80 shadow-2xl transition-all duration-300 ${
-        isFullscreen ? 'h-screen rounded-none border-none' : isTheaterMode ? 'h-[75vh]' : 'h-[50vh] sm:h-[60vh] lg:h-[68vh]'
+        isFullscreen ? 'h-screen rounded-none border-none' : isTheaterMode ? 'h-[60vh] sm:h-[75vh]' : 'h-[30vh] sm:h-[45vh] md:h-[55vh] lg:h-[65vh]'
       }`}
     >
-      {/* Video Element */}
       <video
         ref={videoRef}
         playsInline
@@ -427,7 +450,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
             {/* Logo or Initial */}
             {channel.logo ? (
-              <img
+              <img loading="lazy" decoding="async"
                 src={channel.logo}
                 alt={channel.name}
                 referrerPolicy="no-referrer"
@@ -481,7 +504,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }`}
       >
         <div className="flex items-center gap-2 text-white">
-          <span className="text-xs font-semibold bg-neutral-900/80 px-2.5 py-1 rounded-md border border-neutral-700/60">
+          <span className="text-xs font-semibold bg-transparent px-2.5 py-1 rounded-md border border-neutral-700/30">
             CH {channel.channelNumber}
           </span>
           <span className="text-sm font-semibold text-neutral-200 truncate max-w-xs sm:max-w-md">
@@ -497,7 +520,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             className={`p-2 rounded-lg backdrop-blur-md border transition-colors ${
               channel.isFavorite
                 ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 hover:bg-amber-500/30'
-                : 'bg-neutral-900/80 text-neutral-400 border-neutral-700/50 hover:text-white hover:bg-neutral-800'
+                : 'bg-transparent text-neutral-400 border-neutral-700/30 hover:text-white hover:bg-white/10'
             }`}
           >
             <Sparkles className="w-4 h-4" />
@@ -507,7 +530,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <button
             onClick={onOpenDiagnostics}
             title="Stream Technical Diagnostics"
-            className="p-2 rounded-lg bg-neutral-900/80 backdrop-blur-md border border-neutral-700/50 text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+            className="p-2 rounded-lg bg-transparent backdrop-blur-md border border-neutral-700/30 text-neutral-300 hover:text-white hover:bg-white/10 transition-colors"
           >
             <Activity className="w-4 h-4" />
           </button>
@@ -519,7 +542,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             className={`p-2 rounded-lg backdrop-blur-md border transition-colors hidden sm:inline-flex ${
               isTheaterMode
                 ? 'bg-rose-600/30 text-rose-400 border-rose-500/40'
-                : 'bg-neutral-900/80 text-neutral-300 border-neutral-700/50 hover:text-white hover:bg-neutral-800'
+                : 'bg-transparent text-neutral-300 border-neutral-700/30 hover:text-white hover:bg-white/10'
             }`}
           >
             <Tv className="w-4 h-4" />
@@ -529,7 +552,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Main Broadcast Controls (Bottom Bar) */}
       <div
-        className={`absolute bottom-0 inset-x-0 p-3 sm:p-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent transition-opacity duration-300 flex flex-col gap-2 z-15 ${
+        className={`absolute bottom-0 inset-x-0 p-2 sm:p-3 bg-gradient-to-t from-black/90 via-black/50 to-transparent transition-opacity duration-300 flex flex-col gap-1.5 z-15 ${
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
@@ -631,7 +654,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   setShowAspectMenu(!showAspectMenu);
                   setShowQualityMenu(false);
                 }}
-                className="px-2.5 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-neutral-700/50 transition-colors uppercase flex items-center gap-1"
+                className="px-1.5 py-1 text-[10px] sm:text-xs font-semibold text-neutral-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-neutral-700/50 transition-colors uppercase flex items-center gap-1"
                 title="Aspect Ratio"
               >
                 <span>{aspectRatio}</span>
@@ -667,7 +690,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     setShowQualityMenu(!showQualityMenu);
                     setShowAspectMenu(false);
                   }}
-                  className="px-2.5 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-neutral-700/50 transition-colors flex items-center gap-1"
+                  className="px-1.5 py-1 text-[10px] sm:text-xs font-semibold text-neutral-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg border border-neutral-700/50 transition-colors flex items-center gap-1"
                   title="Stream Quality"
                 >
                   <span className="font-mono">{currentResolution}</span>

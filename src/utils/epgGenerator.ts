@@ -47,9 +47,14 @@ const TEMPLATES_BY_GROUP: Record<string, ProgramTemplate[]> = {
 /**
  * Generate schedule for a channel centered around the current real time
  */
-export function getChannelSchedule(channel: Channel, baseDate = new Date()): EPGProgram[] {
-  const group = TEMPLATES_BY_GROUP[channel.group] ? channel.group : 'General';
-  const templates = TEMPLATES_BY_GROUP[group] || TEMPLATES_BY_GROUP['General'];
+export function getChannelSchedule(channel: Channel, baseDate = new Date(), epgData?: Map<string, EPGProgram[]> | null): EPGProgram[] {
+  if (epgData && epgData.has(channel.id) && (epgData.get(channel.id)?.length ?? 0) > 0) {
+    return epgData.get(channel.id)!;
+  }
+  if (epgData instanceof Map) {
+    // Real EPG configured but no data for this channel: don't fabricate.
+    return [];
+  }
 
   // Seed based on channel number to give stable unique programs per channel
   const seed = channel.channelNumber * 17 + channel.name.length;
@@ -64,11 +69,13 @@ export function getChannelSchedule(channel: Channel, baseDate = new Date()): EPG
 
   // Generate 12 hours of schedule
   for (let i = 0; i < 14; i++) {
-    const templateIndex = (seed + i) % templates.length;
-    const template = templates[templateIndex];
+    // Generic, non-fabricated schedule entries (no fake show titles) for the
+    // built-in auto engine. Durations cycle through common slot lengths.
+    const slotDurations = [30, 45, 60, 30, 60];
+    const duration = slotDurations[(seed + i) % slotDurations.length];
 
     const startTime = new Date(currentTimeCursor);
-    const endTime = new Date(startTime.getTime() + template.duration * 60 * 1000);
+    const endTime = new Date(startTime.getTime() + duration * 60 * 1000);
 
     const now = baseDate.getTime();
     const startMs = startTime.getTime();
@@ -88,12 +95,12 @@ export function getChannelSchedule(channel: Channel, baseDate = new Date()): EPG
     programs.push({
       id: `${channel.id}-epg-${i}`,
       channelId: channel.id,
-      title: template.title,
-      description: template.desc,
+      title: channel.name,
+      description: 'Continuous live broadcast from this channel.',
       category: channel.group,
       startTime: startTime.toISOString(),
       endTime: endTime.toISOString(),
-      durationMinutes: template.duration,
+      durationMinutes: duration,
       progressPercent,
       isLive,
     });
@@ -107,8 +114,8 @@ export function getChannelSchedule(channel: Channel, baseDate = new Date()): EPG
 /**
  * Helper to get currently playing program and next program
  */
-export function getCurrentAndNextProgram(channel: Channel): { current: EPGProgram | null; next: EPGProgram | null } {
-  const schedule = getChannelSchedule(channel);
+export function getCurrentAndNextProgram(channel: Channel, epgData?: Map<string, EPGProgram[]> | null): { current: EPGProgram | null; next: EPGProgram | null } {
+  const schedule = getChannelSchedule(channel, new Date(), epgData);
   const now = Date.now();
 
   const currentIndex = schedule.findIndex((p) => {

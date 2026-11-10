@@ -14,6 +14,7 @@ import {
   Compass,
   Settings,
   ChevronRight,
+  X,
 } from 'lucide-react';
 import { Channel } from '../types/playlist';
 
@@ -21,6 +22,7 @@ interface SidebarProps {
   isCollapsed: boolean;
   currentView: 'home' | 'player' | 'epg';
   onViewChange: (view: 'home' | 'player' | 'epg') => void;
+  onClose?: () => void;
   selectedCategory: string;
   onSelectCategory: (cat: string) => void;
   groups: string[];
@@ -53,13 +55,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAdmin,
   onToggleRemote,
   isRemoteOpen,
+  onClose,
 }) => {
-  // Collapsed Mini Rail (like YouTube mini sidebar)
-  if (isCollapsed) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+
+  const handleViewChange = (view: 'home' | 'player' | 'epg') => {
+    onViewChange(view);
+    if (isMobile) {
+      onClose?.();
+    }
+  };
+
+  // Collapsed Mini Rail (desktop only)
+  if (isCollapsed && !isMobile) {
     return (
       <aside className="w-18 bg-[#0a0204]/70 backdrop-blur-xl border-r border-rose-950/40 shrink-0 hidden md:flex flex-col items-center py-3 space-y-4 select-none z-20">
         <button
-          onClick={() => onViewChange('home')}
+          onClick={() => handleViewChange('home')}
           title="Home"
           className={`flex flex-col items-center justify-center w-14 py-2.5 rounded-xl transition-colors ${
             currentView === 'home'
@@ -72,7 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
-          onClick={() => onViewChange('player')}
+          onClick={() => handleViewChange('player')}
           title="Live Cinema"
           className={`flex flex-col items-center justify-center w-14 py-2.5 rounded-xl transition-colors ${
             currentView === 'player'
@@ -85,7 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
-          onClick={() => onViewChange('epg')}
+          onClick={() => handleViewChange('epg')}
           title="TV Schedule Guide"
           className={`flex flex-col items-center justify-center w-14 py-2.5 rounded-xl transition-colors ${
             currentView === 'epg'
@@ -99,7 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={() => {
-            onViewChange('home');
+            handleViewChange('home');
             onSelectCategory('Favorites');
           }}
           title="Favorites"
@@ -142,11 +154,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Expanded Full YouTube Sidebar
   return (
-    <aside className="w-60 bg-[#0a0204]/70 backdrop-blur-xl border-r border-rose-950/40 shrink-0 hidden md:flex flex-col py-3 px-3 overflow-y-auto select-none z-20 space-y-4">
+    <>
+      {/* Mobile backdrop */}
+      { !isCollapsed && (
+        <div
+          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+          onClick={onClose}
+        />
+      ) }
+      <aside className={`fixed md:static inset-y-0 left-0 z-40 w-60 bg-[#0a0204]/95 md:bg-[#0a0204]/70 backdrop-blur-xl border-r border-rose-950/40 shrink-0 flex flex-col py-3 px-3 overflow-y-auto select-none space-y-4 transform transition-transform duration-200 md:transform-none ${isCollapsed ? '-translate-x-full' : 'translate-x-0'}`}>
+        {/* Mobile close button */}
+        <div className="flex justify-end md:hidden">
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+            aria-label="Close menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       {/* 1. Main Navigation Block */}
       <div className="space-y-1">
         <button
-          onClick={() => onViewChange('home')}
+          onClick={() => handleViewChange('home')}
           className={`w-full flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
             currentView === 'home'
               ? 'bg-neutral-800 text-white font-semibold'
@@ -158,7 +188,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
-          onClick={() => onViewChange('player')}
+          onClick={() => handleViewChange('player')}
           className={`w-full flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
             currentView === 'player'
               ? 'bg-neutral-800 text-white font-semibold'
@@ -170,7 +200,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
-          onClick={() => onViewChange('epg')}
+          onClick={() => handleViewChange('epg')}
           className={`w-full flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
             currentView === 'epg'
               ? 'bg-neutral-800 text-white font-semibold'
@@ -183,7 +213,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={() => {
-            onViewChange('home');
+            handleViewChange('home');
             onSelectCategory('Favorites');
           }}
           className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
@@ -214,7 +244,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="mt-1 space-y-0.5">
           <button
             onClick={() => {
-              onViewChange('home');
+              handleViewChange('home');
               onSelectCategory('All');
             }}
             className={`w-full flex items-center gap-4 px-3 py-2 rounded-xl text-sm transition-colors ${
@@ -233,7 +263,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={group}
                 onClick={() => {
-                  onViewChange('home');
+                  handleViewChange('home');
                   onSelectCategory(group);
                 }}
                 className={`w-full flex items-center gap-4 px-3 py-2 rounded-xl text-sm transition-colors ${
@@ -292,5 +322,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <p className="mt-1">Continuous Live HLS Broadcast</p>
       </div>
     </aside>
+    </>
   );
 };

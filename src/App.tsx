@@ -1,18 +1,19 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Channel, Playlist, StreamDiagnostics, SiteConfig } from './types/playlist';
+import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
+import { Channel, Playlist, StreamDiagnostics, SiteConfig, EPGProgram } from './types/playlist';
 import { DEFAULT_PLAYLIST, DEFAULT_CHANNELS } from './utils/defaultChannels';
 import { parseM3U } from './utils/m3uParser';
+import { parseXMLTV } from './utils/epgParser';
 import { YouTubeTopBar } from './components/YouTubeTopBar';
 import { Sidebar } from './components/Sidebar';
 import { HomeScreen } from './components/HomeScreen';
 import { WatchScreen } from './components/WatchScreen';
 import { EPGScheduleGuide } from './components/EPGScheduleGuide';
 import { VirtualRemote } from './components/VirtualRemote';
-import { PlaylistModal } from './components/PlaylistModal';
-import { DiagnosticsModal } from './components/DiagnosticsModal';
-import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
-import { AdminPanel } from './components/AdminPanel';
-import { RefreshCw } from 'lucide-react';
+const PlaylistModal = lazy(() => import('./components/PlaylistModal').then((m) => ({ default: m.PlaylistModal })));
+const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal').then((m) => ({ default: m.DiagnosticsModal })));
+const KeyboardShortcutsHelp = lazy(() => import('./components/KeyboardShortcutsHelp').then((m) => ({ default: m.KeyboardShortcutsHelp })));
+const AdminPanel = lazy(() => import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })));
+import { RefreshCw, Home, Radio, Layers, Menu } from 'lucide-react';
 
 export default function App() {
   // Load saved playlists or default
@@ -30,7 +31,15 @@ export default function App() {
   const [activePlaylistId, setActivePlaylistId] = useState<string>(() => {
     try {
       const savedId = localStorage.getItem('omnistream_active_playlist_id');
-      if (savedId) return savedId;
+      const savedPlaylistsRaw = localStorage.getItem('omnistream_playlists');
+      if (savedId && savedPlaylistsRaw) {
+        const parsed = JSON.parse(savedPlaylistsRaw);
+        if (Array.isArray(parsed) && parsed.some((p: any) => p && p.id === savedId)) {
+          return savedId;
+        }
+      } else if (savedId === DEFAULT_PLAYLIST.id) {
+        return savedId;
+      }
     } catch {}
     return DEFAULT_PLAYLIST.id;
   });
@@ -62,7 +71,9 @@ export default function App() {
   const [currentView, setCurrentView] = useState<'home' | 'player' | 'epg'>('home');
 
   // YouTube Sidebar state
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
@@ -77,6 +88,22 @@ export default function App() {
 
   // Site server configuration
   const [siteConfig, setSiteConfig] = useState<SiteConfig | null>(null);
+
+  // Apply branding (app name, colors) to the document
+  useEffect(() => {
+    const name = siteConfig?.appName || 'OmniStream TV';
+    document.title = name;
+    const root = document.documentElement;
+    if (siteConfig?.primaryColor) {
+      root.style.setProperty('--primary-color', siteConfig.primaryColor);
+    }
+    if (siteConfig?.accentColor) {
+      root.style.setProperty('--accent-color', siteConfig.accentColor);
+    }
+  }, [siteConfig]);
+
+  // Parsed EPG (XMLTV) data: channelId -> programs
+  const [epgData, setEpgData] = useState<Map<string, EPGProgram[]> | null>(null);
 
   // Stream diagnostics telemetry state
   const [streamDiagnostics, setStreamDiagnostics] = useState<StreamDiagnostics>({
@@ -354,6 +381,34 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNextChannel, handlePrevChannel, handleSelectChannelByNumber]);
 
+  // Fetch & parse XMLTV EPG when an EPG URL is available
+  useEffect(() => {
+    const epgUrl = siteConfig?.epgUrl || currentPlaylist.epgUrl;
+    if (!epgUrl) {
+      setEpgData(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/fetch-epg?url=${encodeURIComponent(epgUrl)}`);
+        if (!res.ok) return;
+        const text = await res.text();
+        if (cancelled) return;
+        const parsed = parseXMLTV(text, currentPlaylist.channels);
+        if (!cancelled) setEpgData(parsed);
+      } catch (err) {
+        console.warn('Failed to load EPG:', err);
+        if (!cancelled) setEpgData(new Map());
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [siteConfig?.epgUrl, currentPlaylist.epgUrl, currentPlaylist.channels]);
+
   // Recent channels objects
   const recentChannels = useMemo(() => {
     return recentChannelIds
@@ -384,6 +439,8 @@ export default function App() {
         isRemoteOpen={isRemoteOpen}
         onOpenShortcuts={() => setIsShortcutsOpen(true)}
         onGoHome={() => setCurrentView('home')}
+        appName={siteConfig?.appName}
+        appLogo={siteConfig?.appLogo}
       />
 
       {/* Synchronizing banner if active */}
@@ -409,10 +466,11 @@ export default function App() {
           onOpenAdmin={() => setIsAdminOpen(true)}
           onToggleRemote={() => setIsRemoteOpen((prev) => !prev)}
           isRemoteOpen={isRemoteOpen}
+          onClose={() => setIsSidebarCollapsed(true)}
         />
 
         {/* Main View Area */}
-        <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-4">
+        <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 pt-0 pb-16 md:pb-4">
           <div className="max-w-[1700px] w-full mx-auto">
             {currentView === 'home' ? (
               <HomeScreen
@@ -428,6 +486,8 @@ export default function App() {
                 selectedCategory={selectedCategory}
                 onSelectCategory={setSelectedCategory}
                 searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                epgData={epgData}
               />
             ) : currentView === 'player' ? (
               <WatchScreen
@@ -444,6 +504,7 @@ export default function App() {
                 onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
                 setStreamDiagnostics={setStreamDiagnostics}
                 recentChannels={recentChannels}
+                epgData={epgData}
               />
             ) : (
               /* Fullscreen EPG Schedule Guide View */
@@ -457,6 +518,7 @@ export default function App() {
                   }}
                   onToggleFavorite={handleToggleFavorite}
                   epgUrl={siteConfig?.epgUrl || currentPlaylist.epgUrl}
+                  epgData={epgData}
                   onOpenAdmin={() => setIsAdminOpen(true)}
                 />
               </div>
@@ -479,6 +541,8 @@ export default function App() {
         }}
       />
 
+      {/* Lazy-loaded modals */}
+      <Suspense fallback={null}>
       {/* Admin Panel Modal */}
       <AdminPanel
         isOpen={isAdminOpen}
@@ -509,11 +573,53 @@ export default function App() {
         channel={activeChannel}
       />
 
+      {/* Mobile Bottom Navigation Bar */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0a0204]/90 backdrop-blur-xl border-t border-rose-950/50 flex items-center justify-around px-1 py-1.5 pb-2">
+        <button
+          onClick={() => setCurrentView('home')}
+          className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
+            currentView === 'home' ? 'text-rose-500' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Home className={`w-5 h-5 ${currentView === 'home' ? 'fill-rose-500/20' : ''}`} />
+          <span className="text-[9px] font-semibold">Home</span>
+          {currentView === 'home' && <span className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+        <button
+          onClick={() => setCurrentView('player')}
+          className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
+            currentView === 'player' ? 'text-rose-500' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Radio className={`w-5 h-5 ${currentView === 'player' ? 'fill-rose-500/20' : ''}`} />
+          <span className="text-[9px] font-semibold">Live TV</span>
+          {currentView === 'player' && <span className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+        <button
+          onClick={() => setCurrentView('epg')}
+          className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
+            currentView === 'epg' ? 'text-rose-500' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Layers className={`w-5 h-5 ${currentView === 'epg' ? 'fill-rose-500/20' : ''}`} />
+          <span className="text-[9px] font-semibold">Guide</span>
+          {currentView === 'epg' && <span className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+        <button
+          onClick={() => setIsSidebarCollapsed(false)}
+          className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-neutral-400 hover:text-neutral-200 transition-all"
+        >
+          <Menu className="w-5 h-5" />
+          <span className="text-[9px] font-semibold">Menu</span>
+        </button>
+      </nav>
+
       {/* Keyboard Shortcuts Help Modal */}
       <KeyboardShortcutsHelp
         isOpen={isShortcutsOpen}
         onClose={() => setIsShortcutsOpen(false)}
       />
+      </Suspense>
     </div>
   );
 }
