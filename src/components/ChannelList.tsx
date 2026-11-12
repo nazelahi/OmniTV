@@ -52,6 +52,14 @@ export const ChannelList: React.FC<ChannelListProps> = ({
     }
   }, [activeChannel.id]);
 
+  const programsByChannel = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getCurrentAndNextProgram>>();
+    channels.forEach((ch) => {
+      map.set(ch.id, getCurrentAndNextProgram(ch, epgData));
+    });
+    return map;
+  }, [channels, epgData]);
+
   // Filter channels
   const filteredChannels = useMemo(() => {
     return channels.filter((ch) => {
@@ -76,31 +84,23 @@ export const ChannelList: React.FC<ChannelListProps> = ({
 
       return true;
     });
-  }, [channels, selectedGroup, searchQuery]);
+  }, [channels, selectedGroup, searchQuery, programsByChannel]);
 
   const favoritesCount = useMemo(() => {
     return channels.filter((ch) => ch.isFavorite).length;
   }, [channels]);
 
-  const programsByChannel = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof getCurrentAndNextProgram>>();
-    channels.forEach((ch) => {
-      map.set(ch.id, getCurrentAndNextProgram(ch, epgData));
-    });
-    return map;
-  }, [channels, epgData]);
-
   // Category tabs list
   const categoryTabs = useMemo(() => {
     const list = ['All'];
-    if (favoritesCount > 0) list.push('Favorites');
+    if (favoritesCount > 0 || selectedGroup === 'Favorites') list.push('Favorites');
     groups.forEach((g) => {
       if (g !== 'Favorites' && !list.includes(g)) {
         list.push(g);
       }
     });
     return list;
-  }, [groups, favoritesCount]);
+  }, [groups, favoritesCount, selectedGroup]);
 
   return (
     <div className="flex flex-col h-full bg-[#0a0204]/75 backdrop-blur-xl rounded-xl border border-rose-950/50 overflow-hidden shadow-xl shadow-rose-950/20">

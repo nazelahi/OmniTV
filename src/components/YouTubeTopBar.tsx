@@ -101,8 +101,9 @@ export const YouTubeTopBar: React.FC<YouTubeTopBarProps> = ({
             )}
           </div>
           <button
-            onClick={() => {}}
-            title="Search"
+            type="button"
+            onClick={onGoHome}
+            title="Show search results"
             className="px-5 py-2 bg-neutral-800 hover:bg-neutral-750 border border-l-0 border-neutral-750 rounded-r-full text-neutral-300 hover:text-white transition-colors"
           >
             <Search className="w-4 h-4" />

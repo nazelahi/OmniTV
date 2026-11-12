@@ -13,7 +13,7 @@ export const KeyboardShortcutsHelp: React.FC<KeyboardShortcutsHelpProps> = ({
   if (!isOpen) return null;
 
   const shortcuts = [
-    { key: '↑ / ↓', desc: 'Previous / Next Channel' },
+    { key: '↓ / ↑', desc: 'Previous / Next Channel' },
     { key: '0 - 9', desc: 'Type channel number to switch directly' },
     { key: 'Space', desc: 'Play / Pause stream' },
     { key: 'M', desc: 'Mute / Unmute audio' },

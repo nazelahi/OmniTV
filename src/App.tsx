@@ -46,6 +46,10 @@ export default function App() {
 
   // Current active playlist
   const currentPlaylist = playlists.find((p) => p.id === activePlaylistId) || playlists[0] || DEFAULT_PLAYLIST;
+  const playlistsRef = useRef(playlists);
+  playlistsRef.current = playlists;
+  const activePlaylistIdRef = useRef(activePlaylistId);
+  activePlaylistIdRef.current = activePlaylistId;
 
   // Active channel
   const [activeChannelId, setActiveChannelId] = useState<string>(() => {
@@ -57,6 +61,10 @@ export default function App() {
   });
 
   const activeChannel = currentPlaylist.channels.find((c) => c.id === activeChannelId) || currentPlaylist.channels[0] || DEFAULT_CHANNELS[0];
+
+  // Keep the latest active channel id available inside stable callbacks
+  const activeChannelIdRef = useRef(activeChannelId);
+  activeChannelIdRef.current = activeChannelId;
 
   // Recently watched channels (history)
   const [recentChannelIds, setRecentChannelIds] = useState<string[]>(() => {
@@ -153,7 +161,7 @@ export default function App() {
   }, []);
 
   // Fetch playlist from server and apply to state
-  const reloadFromRemoteUrl = useCallback(async (cfg?: SiteConfig) => {
+  const reloadFromRemoteUrl = useCallback(async (cfg?: SiteConfig): Promise<boolean> => {
     setIsSiteSyncing(true);
     try {
       let currentCfg = cfg;
@@ -167,7 +175,7 @@ export default function App() {
 
       if (!currentCfg || !currentCfg.playlistUrl) {
         setIsSiteSyncing(false);
-        return;
+        return false;
       }
 
       const playlistRes = await fetch(`/api/fetch-playlist?url=${encodeURIComponent(currentCfg.playlistUrl)}`);
@@ -197,35 +205,53 @@ export default function App() {
       combinedChannels.forEach((c) => groupsSet.add(c.group));
       const groups = Array.from(groupsSet).sort();
 
-      const globalPlaylist: Playlist = {
-        id: 'global-server-playlist',
-        name: currentCfg.playlistName || 'Primary Live TV',
-        url: currentCfg.playlistUrl,
-        channels: combinedChannels,
-        groups: groups.length > 0 ? groups : ['General'],
-        updatedAt: new Date().toISOString(),
-        isCustom: false,
-      };
+      // Switch to the server playlist on first run (curated default placeholder) or if
+      // the saved selection no longer exists. A user-selected imported playlist is kept.
+      const currentActiveId = activePlaylistIdRef.current;
+      const currentExists = playlistsRef.current.some((p) => p.id === currentActiveId);
+      const shouldActivate = !currentExists || currentActiveId === DEFAULT_PLAYLIST.id;
 
       setPlaylists((prev) => {
+        const existing = prev.find((p) => p.id === 'global-server-playlist');
+        const favoriteIds = new Set(
+          (existing?.channels || []).filter((c) => c.isFavorite).map((c) => c.id)
+        );
+
+        const globalPlaylist: Playlist = {
+          id: 'global-server-playlist',
+          name: currentCfg.playlistName || 'Primary Live TV',
+          url: currentCfg.playlistUrl,
+          epgUrl: currentCfg.epgUrl || parsed.epgUrl || undefined,
+          channels: combinedChannels.map((ch) =>
+            favoriteIds.has(ch.id) ? { ...ch, isFavorite: true } : ch
+          ),
+          groups: groups.length > 0 ? groups : ['General'],
+          updatedAt: new Date().toISOString(),
+          isCustom: false,
+        };
+
         const filtered = prev.filter((p) => p.id !== 'global-server-playlist');
         return [globalPlaylist, ...filtered];
       });
 
-      setActivePlaylistId('global-server-playlist');
+      if (shouldActivate) {
+        setActivePlaylistId('global-server-playlist');
 
-      if (combinedChannels.length > 0) {
-        const exists = combinedChannels.some((c) => c.id === activeChannelId);
-        if (!exists) {
-          handleSelectChannel(combinedChannels[0]);
+        if (combinedChannels.length > 0) {
+          const exists = combinedChannels.some((c) => c.id === activeChannelIdRef.current);
+          if (!exists) {
+            handleSelectChannel(combinedChannels[0]);
+          }
         }
       }
+      return true;
     } catch (err) {
       console.error('Failed to load global playlist from server:', err);
+      return false;
     } finally {
       setIsSiteSyncing(false);
     }
-  }, [activeChannelId, handleSelectChannel]);
+  }, [handleSelectChannel]);
 
   // Initial load: check server config
   useEffect(() => {
@@ -381,6 +407,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNextChannel, handlePrevChannel, handleSelectChannelByNumber]);
 
+  // Identity of the channel lineup, so EPG is only re-downloaded when channels change
+  // (not when a favorite flag changes) — avoids multi-MB refetches.
+  const channelSignature = useMemo(
+    () => currentPlaylist.channels.map((c) => `${c.id}:${c.tvgId || ''}`).join('|'),
+    [currentPlaylist.channels]
+  );
+  const channelsRef = useRef(currentPlaylist.channels);
+  channelsRef.current = currentPlaylist.channels;
+
   // Fetch & parse XMLTV EPG when an EPG URL is available
   useEffect(() => {
     const epgUrl = siteConfig?.epgUrl || currentPlaylist.epgUrl;
@@ -389,16 +424,23 @@ export default function App() {
       return;
     }
 
+    const controller = new AbortController();
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/fetch-epg?url=${encodeURIComponent(epgUrl)}`);
-        if (!res.ok) return;
+        const res = await fetch(`/api/fetch-epg?url=${encodeURIComponent(epgUrl)}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          if (!cancelled) setEpgData(new Map());
+          return;
+        }
         const text = await res.text();
         if (cancelled) return;
-        const parsed = parseXMLTV(text, currentPlaylist.channels);
+        const parsed = parseXMLTV(text, channelsRef.current);
         if (!cancelled) setEpgData(parsed);
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.warn('Failed to load EPG:', err);
         if (!cancelled) setEpgData(new Map());
       }
@@ -406,8 +448,9 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [siteConfig?.epgUrl, currentPlaylist.epgUrl, currentPlaylist.channels]);
+  }, [siteConfig?.epgUrl, currentPlaylist.epgUrl, channelSignature]);
 
   // Recent channels objects
   const recentChannels = useMemo(() => {
@@ -432,7 +475,11 @@ export default function App() {
       <YouTubeTopBar
         onToggleSidebar={() => setIsSidebarCollapsed((prev) => !prev)}
         searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={(q) => {
+          setSearchQuery(q);
+          // Typing in the global search takes the user to the results grid
+          if (q.trim() && currentView !== 'home') setCurrentView('home');
+        }}
         onOpenPlaylistModal={() => setIsPlaylistModalOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
         onToggleRemote={() => setIsRemoteOpen((prev) => !prev)}

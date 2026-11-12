@@ -26,7 +26,7 @@ interface AdminPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onConfigSaved: (config: SiteConfig) => void;
-  onForceReloadChannels: () => Promise<void>;
+  onForceReloadChannels: () => Promise<boolean | void>;
   channels: Channel[];
 }
 
@@ -145,7 +145,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         }
         setPinInput('');
       } else {
-        setPinError(data.error || 'Invalid Admin PIN (Default is 1234)');
+        setPinError(data.error || 'Incorrect Admin PIN');
       }
     } catch {
       setPinError('Unable to reach server to verify PIN. Please check your connection.');
@@ -223,12 +223,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       });
 
       const data = await res.json();
+      if (res.status === 401) {
+        // Session expired or server restarted: force re-authentication instead of
+        // leaving the panel unlocked with a dead token.
+        sessionStorage.removeItem('omnistream_admin_auth');
+        sessionStorage.removeItem('omnistream_admin_token');
+        setIsAuthenticated(false);
+        setSaveError('Admin session expired. Please sign in again.');
+        return;
+      }
       if (res.ok && data.success) {
         setSaveSuccess('Configuration saved and published to the website!');
         onConfigSaved(data.config);
 
         // Immediately trigger refresh of channels across site
-        await onForceReloadChannels();
+        const synced = await onForceReloadChannels();
+        if (synced === false) {
+          setSaveError('Settings saved, but the playlist could not be refreshed. Check the playlist URL.');
+        } else {
+          setSaveSuccess('Configuration saved and published to the website!');
+        }
         setNewAdminPin('');
 
         setTimeout(() => {
@@ -248,9 +262,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleForceSync = async () => {
     setIsSyncing(true);
     try {
-      await onForceReloadChannels();
-      setSaveSuccess('Playlist refetched and synced successfully!');
-      setTimeout(() => setSaveSuccess(null), 3000);
+      const ok = await onForceReloadChannels();
+      if (ok === false) {
+        setSaveError('Failed to reload playlist. Verify the playlist URL and server connectivity.');
+      } else {
+        setSaveSuccess('Playlist refetched and synced successfully!');
+        setTimeout(() => setSaveSuccess(null), 3000);
+      }
     } catch (err: any) {
       setSaveError(err.message || 'Failed to reload playlist');
     } finally {
@@ -1019,6 +1037,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onClick={() => {
                     setIsAuthenticated(false);
                     sessionStorage.removeItem('omnistream_admin_auth');
+                    sessionStorage.removeItem('omnistream_admin_token');
                   }}
                   className="px-3 py-1.5 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
                 >

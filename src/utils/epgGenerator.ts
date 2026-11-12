@@ -112,6 +112,24 @@ export function getChannelSchedule(channel: Channel, baseDate = new Date(), epgD
 }
 
 /**
+ * Recompute live status/progress from the program's timestamps so the values
+ * don't go stale when the schedule was parsed earlier.
+ */
+export function withLiveTiming(program: EPGProgram, now = Date.now()): EPGProgram {
+  const startMs = new Date(program.startTime).getTime();
+  const endMs = new Date(program.endTime).getTime();
+  const isLive = now >= startMs && now < endMs;
+  let progressPercent = 0;
+  if (isLive) {
+    const total = Math.max(1, endMs - startMs);
+    progressPercent = Math.min(100, Math.max(0, Math.round(((now - startMs) / total) * 100)));
+  } else if (now >= endMs) {
+    progressPercent = 100;
+  }
+  return { ...program, isLive, progressPercent };
+}
+
+/**
  * Helper to get currently playing program and next program
  */
 export function getCurrentAndNextProgram(channel: Channel, epgData?: Map<string, EPGProgram[]> | null): { current: EPGProgram | null; next: EPGProgram | null } {
@@ -126,13 +144,13 @@ export function getCurrentAndNextProgram(channel: Channel, epgData?: Map<string,
 
   if (currentIndex !== -1) {
     return {
-      current: schedule[currentIndex],
+      current: withLiveTiming(schedule[currentIndex], now),
       next: schedule[currentIndex + 1] || null,
     };
   }
 
   return {
-    current: schedule[0] || null,
+    current: schedule[0] ? withLiveTiming(schedule[0], now) : null,
     next: schedule[1] || null,
   };
 }

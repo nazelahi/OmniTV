@@ -65,6 +65,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showControls, setShowControls] = useState<boolean>(true);
   const [showOSD, setShowOSD] = useState<boolean>(true);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState<number>(0);
+  const networkRetryRef = useRef<number>(0);
   const [qualityLevels, setQualityLevels] = useState<{ id: number; height: number; bitrate: number }[]>([]);
   const [selectedQuality, setSelectedQuality] = useState<number>(-1); // -1 = auto
   const [showQualityMenu, setShowQualityMenu] = useState<boolean>(false);
@@ -122,6 +124,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setQualityLevels([]);
     setSelectedQuality(-1);
     setCurrentResolution('Auto');
+    networkRetryRef.current = 0;
     triggerOSD();
 
     // Destroy any existing HLS instance
@@ -148,6 +151,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        networkRetryRef.current = 0;
         setIsBuffering(false);
         const levels = data.levels.map((lvl, idx) => ({
           id: idx,
@@ -176,8 +180,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              // Try to recover network error
-              hls.startLoad();
+              // Retry a few times, then surface the failure instead of spinning forever
+              networkRetryRef.current += 1;
+              if (networkRetryRef.current <= 3) {
+                hls.startLoad();
+              } else {
+                hls.destroy();
+                if (hlsRef.current === hls) hlsRef.current = null;
+                setStreamError(`Unable to load stream after several attempts (${data.details || 'network error'}).`);
+                setIsBuffering(false);
+              }
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
               hls.recoverMediaError();
@@ -185,6 +197,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             default:
               // Cannot recover
               hls.destroy();
+              if (hlsRef.current === hls) hlsRef.current = null;
               setStreamError(`Stream playback error: ${data.details || 'Connection failed'}`);
               setIsBuffering(false);
               break;
@@ -213,7 +226,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         hlsRef.current = null;
       }
     };
-  }, [channel, triggerOSD]);
+  }, [channel, triggerOSD, reloadNonce]);
 
   // Sync Diagnostics data
   useEffect(() => {
@@ -332,17 +345,51 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const handleReload = () => {
     setStreamError(null);
     setIsBuffering(true);
-    const video = videoRef.current;
-    if (hlsRef.current) {
-      hlsRef.current.loadSource(channel.url);
-      hlsRef.current.startLoad();
-    } else if (video) {
-      video.src = channel.url;
-      video.load();
-      video.play().catch(() => {});
-    }
+    networkRetryRef.current = 0;
+    // Bump the nonce so the playback effect tears down the old instance
+    // (including a destroyed one) and builds a fresh HLS player.
+    setReloadNonce((n) => n + 1);
     triggerOSD();
   };
+
+  // Player keyboard shortcuts (Space/M/F/P) — only active while this view is mounted
+  const playerShortcutsRef = useRef({ togglePlay, toggleMute, toggleFullscreen, togglePiP });
+  playerShortcutsRef.current = { togglePlay, toggleMute, toggleFullscreen, togglePiP };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const handlers = playerShortcutsRef.current;
+      switch (e.key.toLowerCase()) {
+        case ' ':
+          e.preventDefault();
+          handlers.togglePlay();
+          break;
+        case 'm':
+          handlers.toggleMute();
+          break;
+        case 'f':
+          handlers.toggleFullscreen();
+          break;
+        case 'p':
+          handlers.togglePiP();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // Quality switch
   const handleQualitySelect = (levelIndex: number) => {

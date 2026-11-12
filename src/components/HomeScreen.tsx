@@ -46,14 +46,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   // YouTube Category filter chips
   const categoryChips = useMemo(() => {
     const list = ['All'];
-    if (favoritesCount > 0) list.push('Favorites');
+    if (favoritesCount > 0 || selectedCategory === 'Favorites') list.push('Favorites');
     groups.forEach((g) => {
       if (g !== 'Favorites' && !list.includes(g)) {
         list.push(g);
       }
     });
     return list;
-  }, [groups, favoritesCount]);
+  }, [groups, favoritesCount, selectedCategory]);
 
   // Precompute current EPG program per channel to avoid regenerating schedules on every render
   const programsByChannel = useMemo(() => {

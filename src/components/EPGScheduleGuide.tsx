@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Clock, Play, Sparkles, Tv, Info, Search, X, Settings, ExternalLink } from 'lucide-react';
 import { Channel, EPGProgram } from '../types/playlist';
-import { getChannelSchedule } from '../utils/epgGenerator';
+import { getChannelSchedule, withLiveTiming } from '../utils/epgGenerator';
 
 interface EPGScheduleGuideProps {
   channels: Channel[];
@@ -27,7 +27,12 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
   const [showSourceInfo, setShowSourceInfo] = useState<boolean>(false);
 
-  const now = useMemo(() => new Date(), []);
+  // Re-render the guide every minute so the clock and live progress advance
+  const [now, setNow] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Time slot columns (showing 6 hours in 30-min steps)
   const timeSlots = useMemo(() => {
@@ -243,7 +248,8 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
                   {/* Horizontal Program Blocks */}
                   <div className="flex-1 flex items-stretch p-1.5 gap-1.5 overflow-hidden">
                     {schedule.slice(0, 8).map((prog) => {
-                      const isNow = prog.isLive;
+                      const liveProg = withLiveTiming(prog);
+                      const isNow = liveProg.isLive;
                       // approximate width based on duration (30min = 176px approx)
                       const widthPx = Math.max(140, Math.round((prog.durationMinutes / 30) * 176));
 
@@ -288,7 +294,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
                             <div className="w-full bg-neutral-800 h-1 rounded-full overflow-hidden mt-2">
                               <div
                                 className="bg-rose-500 h-full rounded-full"
-                                style={{ width: `${prog.progressPercent}%` }}
+                                style={{ width: `${liveProg.progressPercent}%` }}
                               />
                             </div>
                           )}
