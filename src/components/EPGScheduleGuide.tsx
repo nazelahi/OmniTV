@@ -3,6 +3,8 @@ import { Clock, Play, Sparkles, Tv, Info, Search, X, Settings, ExternalLink } fr
 import { Channel, EPGProgram } from '../types/playlist';
 import { getChannelSchedule, withLiveTiming } from '../utils/epgGenerator';
 import { getProgramPoster, generateDynamicPosterSvg } from '../utils/posterService';
+import { searchChannels } from '../utils/channelSearch';
+import { HighlightText } from './HighlightText';
 
 interface EPGScheduleGuideProps {
   channels: Channel[];
@@ -52,28 +54,10 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
     return slots;
   }, [now]);
 
-  // Filter channels
-  const filteredChannels = useMemo(() => {
-    return channels.filter((ch) => {
-      if (selectedGroup !== 'All' && ch.group !== selectedGroup) return false;
-      if (searchFilter.trim()) {
-        const q = searchFilter.toLowerCase();
-        return ch.name.toLowerCase().includes(q) || ch.group.toLowerCase().includes(q);
-      }
-      return true;
-    });
-  }, [channels, selectedGroup, searchFilter]);
-
-  const groups = useMemo(() => {
-    const set = new Set<string>();
-    channels.forEach((c) => set.add(c.group));
-    return ['All', ...Array.from(set)];
-  }, [channels]);
-
   const schedulesByChannel = useMemo(() => {
     const map = new Map<string, EPGProgram[]>();
     const currentMs = now.getTime();
-    filteredChannels.forEach((ch) => {
+    channels.forEach((ch) => {
       const raw = getChannelSchedule(ch, now, epgData);
       map.set(
         ch.id,
@@ -81,7 +65,27 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
       );
     });
     return map;
-  }, [filteredChannels, now, epgData]);
+  }, [channels, now, epgData]);
+
+  // Filter & rank channels across names, #numbers, categories, countries, and scheduled programs
+  const filteredChannels = useMemo(() => {
+    const groupFiltered =
+      selectedGroup === 'All'
+        ? channels
+        : channels.filter((ch) => ch.group === selectedGroup);
+
+    if (!searchFilter.trim()) return groupFiltered;
+
+    return searchChannels(groupFiltered, searchFilter, { schedulesByChannel }).map(
+      (r) => r.channel
+    );
+  }, [channels, selectedGroup, searchFilter, schedulesByChannel]);
+
+  const groups = useMemo(() => {
+    const set = new Set<string>();
+    channels.forEach((c) => set.add(c.group));
+    return ['All', ...Array.from(set)];
+  }, [channels]);
 
   return (
     <div className="flex flex-col h-full bg-[#0a0204]/75 backdrop-blur-xl rounded-xl border border-rose-950/50 overflow-hidden shadow-xl shadow-rose-950/20">
@@ -105,7 +109,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
               type="text"
               value={searchFilter}
               onChange={(e) => setSearchFilter(e.target.value)}
-              placeholder="Search guide..."
+              placeholder="Search channel, #num, or show..."
               className="w-full pl-8 pr-7 py-1.5 bg-neutral-950/80 border border-neutral-700/60 rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500"
             />
             {searchFilter && (
@@ -244,8 +248,16 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
                       </div>
 
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-white truncate">{channel.name}</p>
-                        <p className="text-[10px] text-neutral-400 truncate">{channel.group}</p>
+                        <HighlightText
+                          text={channel.name}
+                          query={searchFilter}
+                          className="text-xs font-bold text-white truncate block"
+                        />
+                        <HighlightText
+                          text={channel.group}
+                          query={searchFilter}
+                          className="text-[10px] text-neutral-400 truncate block"
+                        />
                       </div>
                     </div>
 

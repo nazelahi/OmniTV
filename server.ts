@@ -259,7 +259,13 @@ function persistSyncStatus(
   writeConfig(latest);
 }
 
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '10mb' }));
+
+// API: Lightweight health check
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ ok: true });
+});
 
 // API: Get current website configuration
 app.get('/api/config', (req: Request, res: Response) => {
@@ -282,9 +288,12 @@ app.post('/api/verify-pin', (req: Request, res: Response) => {
     });
   }
 
-  const { pin } = req.body;
+  const rawPin = req.body && typeof req.body === 'object' ? req.body.pin : undefined;
+  const submittedPin = typeof rawPin === 'string' || typeof rawPin === 'number' ? String(rawPin).trim() : '';
   const config = readConfig();
-  if (config.adminPin === pin || !config.adminPin) {
+  const expectedPin = typeof config.adminPin === 'string' ? config.adminPin.trim() : '';
+
+  if (!expectedPin || expectedPin === submittedPin) {
     pinAttempts.delete(ip);
     const token = issueAdminToken();
     return res.json({ success: true, token });
@@ -302,7 +311,7 @@ app.post('/api/config', (req: Request, res: Response) => {
   if (req.body && typeof req.body === 'object') {
     delete req.body._adminToken;
   }
-  const { playlistUrl, playlistName, epgUrl, autoRefreshMinutes, adminPin, customChannels, disabledChannelIds, appName, appLogo, appTagline, primaryColor, accentColor } = req.body;
+  const { playlistUrl, playlistName, epgUrl, autoRefreshMinutes, adminPin, customChannels, disabledChannelIds, appName, appLogo, appTagline, primaryColor, accentColor } = (req.body && typeof req.body === 'object' ? req.body : {});
   const current = readConfig();
 
   const nextPlaylistUrl =
@@ -453,7 +462,7 @@ app.post('/api/test-playlist', async (req: Request, res: Response) => {
   if (!isAdminTokenValid(extractAdminToken(req))) {
     return res.status(401).json({ success: false, error: 'Admin authentication required' });
   }
-  const { url } = req.body;
+  const { url } = (req.body && typeof req.body === 'object' ? req.body : {});
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'Please provide a valid URL' });
   }
@@ -501,22 +510,44 @@ app.post('/api/test-playlist', async (req: Request, res: Response) => {
   }
 });
 
-// Mount Vite or static dist
+// Always return JSON for unknown API routes and API errors
+app.use('/api', (_req: Request, res: Response) => {
+  res.status(404).json({ success: false, error: 'API endpoint not found' });
+});
+
+app.use('/api', (err: any, _req: Request, res: Response, _next: any) => {
+  const status = typeof err?.status === 'number' ? err.status : 500;
+  res.status(status).json({
+    success: false,
+    error: err?.message || 'Internal server error',
+  });
+});
+
+// Mount Vite or static dist without blocking /api readiness
 async function startServer() {
   const isDev = process.env.NODE_ENV !== 'production';
 
   if (isDev) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        port: Number(PORT),
-        host: '0.0.0.0',
-      },
-      appType: 'spa',
-    });
+    let viteMiddleware: any = null;
+    const viteReady = import('vite').then(({ createServer: createViteServer }) =>
+      createViteServer({
+        server: {
+          middlewareMode: true,
+          port: Number(PORT),
+          host: '0.0.0.0',
+        },
+        appType: 'spa',
+      }).then((vite) => {
+        viteMiddleware = vite.middlewares;
+      })
+    );
 
-    app.use(vite.middlewares);
+    app.use(async (req, res, next) => {
+      if (!viteMiddleware) {
+        await viteReady;
+      }
+      return viteMiddleware(req, res, next);
+    });
   } else {
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));

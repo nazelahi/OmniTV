@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { Channel, EPGProgram } from '../types/playlist';
 import { getCurrentAndNextProgram } from '../utils/epgGenerator';
+import { searchChannels } from '../utils/channelSearch';
+import { HighlightText } from './HighlightText';
 
 interface ChannelListProps {
   channels: Channel[];
@@ -60,30 +62,35 @@ export const ChannelList: React.FC<ChannelListProps> = ({
     return map;
   }, [channels, epgData]);
 
-  // Filter channels
-  const filteredChannels = useMemo(() => {
-    return channels.filter((ch) => {
-      // Group filter
-      if (selectedGroup === 'Favorites') {
-        if (!ch.isFavorite) return false;
-      } else if (selectedGroup !== 'All') {
-        if (ch.group.toLowerCase() !== selectedGroup.toLowerCase()) return false;
+  // Filter & rank channels
+  const { filteredChannels, totalUnfilteredMatches } = useMemo(() => {
+    const groupFiltered = channels.filter((ch) => {
+      if (selectedGroup === 'Favorites') return !!ch.isFavorite;
+      if (selectedGroup !== 'All') {
+        return ch.group.toLowerCase() === selectedGroup.toLowerCase();
       }
-
-      // Search filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesName = ch.name.toLowerCase().includes(q);
-        const matchesGroup = ch.group.toLowerCase().includes(q);
-        const matchesNumber = ch.channelNumber.toString() === q;
-        const matchesCountry = ch.country?.toLowerCase().includes(q);
-        const progTitle = programsByChannel.get(ch.id)?.current?.title?.toLowerCase() || '';
-        const matchesProgram = progTitle.includes(q);
-        return matchesName || matchesGroup || matchesNumber || matchesCountry || matchesProgram;
-      }
-
       return true;
     });
+
+    if (!searchQuery.trim()) {
+      return {
+        filteredChannels: groupFiltered,
+        totalUnfilteredMatches: groupFiltered.length,
+      };
+    }
+
+    const matches = searchChannels(groupFiltered, searchQuery, { programsByChannel }).map(
+      (r) => r.channel
+    );
+    const allCount =
+      selectedGroup === 'All'
+        ? matches.length
+        : searchChannels(channels, searchQuery, { programsByChannel }).length;
+
+    return {
+      filteredChannels: matches,
+      totalUnfilteredMatches: allCount,
+    };
   }, [channels, selectedGroup, searchQuery, programsByChannel]);
 
   const favoritesCount = useMemo(() => {
@@ -191,12 +198,36 @@ export const ChannelList: React.FC<ChannelListProps> = ({
       {/* Channel Items Scroll Area */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
         {filteredChannels.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-center p-6 text-neutral-400">
+          <div className="flex flex-col items-center justify-center min-h-48 text-center p-6 text-neutral-400">
             <Tv className="w-10 h-10 text-neutral-600 mb-2" />
             <p className="text-sm font-semibold text-neutral-300">No channels found</p>
             <p className="text-xs text-neutral-500 mt-1">
-              Try adjusting your search query or switching category filters.
+              {selectedGroup !== 'All' && searchQuery.trim() && totalUnfilteredMatches > 0
+                ? `${totalUnfilteredMatches} channel${totalUnfilteredMatches === 1 ? '' : 's'} matched in other categories.`
+                : 'Try adjusting your search query or switching category filters.'}
             </p>
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
+              {selectedGroup !== 'All' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroup('All')}
+                  className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors"
+                >
+                  {totalUnfilteredMatches > 0
+                    ? `Search All (${totalUnfilteredMatches})`
+                    : 'Show All Categories'}
+                </button>
+              )}
+              {searchQuery.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold transition-colors"
+                >
+                  Clear Search
+                </button>
+              )}
+            </div>
           </div>
         ) : viewMode === 'list' ? (
           filteredChannels.map((ch) => {
@@ -247,9 +278,11 @@ export const ChannelList: React.FC<ChannelListProps> = ({
                 {/* Channel Details */}
                 <div className="flex-1 min-w-0 pr-2">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-xs sm:text-sm text-white truncate">
-                      {ch.name}
-                    </span>
+                    <HighlightText
+                      text={ch.name}
+                      query={searchQuery}
+                      className="font-semibold text-xs sm:text-sm text-white truncate"
+                    />
                     {isActive && (
                       <span className="flex items-center gap-0.5 shrink-0">
                         <span className="w-1.5 h-3 bg-rose-500 animate-pulse rounded-full" />
@@ -259,11 +292,19 @@ export const ChannelList: React.FC<ChannelListProps> = ({
                     )}
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-neutral-400 mt-0.5 truncate">
-                    <span className="text-neutral-500 font-medium">{ch.group}</span>
+                    <HighlightText
+                      text={ch.group}
+                      query={searchQuery}
+                      className="text-neutral-500 font-medium"
+                    />
                     {nowProg && (
                       <>
                         <span aria-hidden="true">·</span>
-                        <span className="truncate text-neutral-300">{nowProg.title}</span>
+                        <HighlightText
+                          text={nowProg.title}
+                          query={searchQuery}
+                          className="truncate text-neutral-300"
+                        />
                       </>
                     )}
                   </div>

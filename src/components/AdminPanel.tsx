@@ -99,9 +99,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    fetch('/api/config')
-      .then((res) => res.json())
-      .then((data: SiteConfig) => {
+    fetch('/api/config', { cache: 'no-store', credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: SiteConfig | null) => {
         if (data) {
           setPlaylistUrl(data.playlistUrl || '');
           setPlaylistName(data.playlistName || 'OmniStream TV Global');
@@ -123,32 +123,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   if (!isOpen) return null;
 
-  // PIN Verification
+  // PIN Verification with transient retry & safe response parsing
   const handleVerifyPin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsVerifyingPin(true);
     setPinError(null);
 
-    try {
+    const attemptVerify = async () => {
       const res = await fetch('/api/verify-pin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        cache: 'no-store',
         body: JSON.stringify({ pin: pinInput }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const rawText = await res.text();
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
+      return { res, data };
+    };
+
+    try {
+      let result = await attemptVerify();
+      // Retry once if proxy/dev server is briefly restarting (502/503/504 or non-JSON gateway page)
+      if (!result.data && [502, 503, 504].includes(result.res.status)) {
+        await new Promise((r) => setTimeout(r, 600));
+        result = await attemptVerify();
+      }
+
+      const { res, data } = result;
+      if (res.ok && data?.success) {
         setIsAuthenticated(true);
         sessionStorage.setItem('omnistream_admin_auth', 'true');
         if (data.token) {
           sessionStorage.setItem('omnistream_admin_token', data.token);
         }
         setPinInput('');
+      } else if (data?.error) {
+        setPinError(data.error);
+      } else if (!res.ok) {
+        setPinError(`Server error (HTTP ${res.status}). Please try again.`);
       } else {
-        setPinError(data.error || 'Incorrect Admin PIN');
+        setPinError('Unexpected server response. Please refresh and try again.');
       }
     } catch {
-      setPinError('Unable to reach server to verify PIN. Please check your connection.');
+      // One automatic retry on transient network interruption (e.g., server restart)
+      try {
+        await new Promise((r) => setTimeout(r, 600));
+        const { res, data } = await attemptVerify();
+        if (res.ok && data?.success) {
+          setIsAuthenticated(true);
+          sessionStorage.setItem('omnistream_admin_auth', 'true');
+          if (data.token) {
+            sessionStorage.setItem('omnistream_admin_token', data.token);
+          }
+          setPinInput('');
+          return;
+        }
+        setPinError(data?.error || (res.ok ? 'Incorrect Admin PIN' : `Server error (HTTP ${res.status}). Please try again.`));
+      } catch {
+        setPinError('Unable to reach server to verify PIN. Please check your connection or reload the page.');
+      }
     } finally {
       setIsVerifyingPin(false);
     }
@@ -169,10 +209,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        credentials: 'same-origin',
+        cache: 'no-store',
         body: JSON.stringify({ url: targetUrl }),
       });
 
-      const data = await res.json();
+      const raw = await res.text();
+      const data = raw ? JSON.parse(raw) : { success: false, error: `HTTP ${res.status}` };
       setTestResult(data);
     } catch (err: any) {
       setTestResult({

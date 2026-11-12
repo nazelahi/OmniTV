@@ -13,6 +13,8 @@ import {
 import { Channel, EPGProgram } from '../types/playlist';
 import { getCurrentAndNextProgram } from '../utils/epgGenerator';
 import { getProgramPoster, generateDynamicPosterSvg } from '../utils/posterService';
+import { searchChannels } from '../utils/channelSearch';
+import { HighlightText } from './HighlightText';
 
 interface HomeScreenProps {
   channels: Channel[];
@@ -125,28 +127,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     return result;
   }, [channels, epgData]);
 
-  // Filtered channels
-  const filteredChannels = useMemo(() => {
-    return channels.filter((ch) => {
-      if (selectedCategory === 'Favorites') {
-        if (!ch.isFavorite) return false;
-      } else if (selectedCategory !== 'All') {
-        if (ch.group.toLowerCase() !== selectedCategory.toLowerCase()) return false;
+  // Filtered & relevance-ranked channels
+  const { filteredChannels, totalUnfilteredMatches } = useMemo(() => {
+    const categoryFiltered = channels.filter((ch) => {
+      if (selectedCategory === 'Favorites') return !!ch.isFavorite;
+      if (selectedCategory !== 'All') {
+        return ch.group.toLowerCase() === selectedCategory.toLowerCase();
       }
-
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesName = ch.name.toLowerCase().includes(q);
-        const matchesGroup = ch.group.toLowerCase().includes(q);
-        const matchesNumber = ch.channelNumber.toString() === q;
-        const matchesCountry = ch.country?.toLowerCase().includes(q);
-        const progTitle = programsByChannel.get(ch.id)?.current?.title?.toLowerCase() || '';
-        const matchesProgram = progTitle.includes(q);
-        return matchesName || matchesGroup || matchesNumber || matchesCountry || matchesProgram;
-      }
-
       return true;
     });
+
+    if (!searchQuery.trim()) {
+      return {
+        filteredChannels: categoryFiltered,
+        totalUnfilteredMatches: categoryFiltered.length,
+      };
+    }
+
+    const inCategoryMatches = searchChannels(categoryFiltered, searchQuery, {
+      programsByChannel,
+    }).map((r) => r.channel);
+
+    const allCategoryCount =
+      selectedCategory === 'All'
+        ? inCategoryMatches.length
+        : searchChannels(channels, searchQuery, { programsByChannel }).length;
+
+    return {
+      filteredChannels: inCategoryMatches,
+      totalUnfilteredMatches: allCategoryCount,
+    };
   }, [channels, selectedCategory, searchQuery, programsByChannel]);
 
   return (
@@ -548,18 +558,79 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           3. COMPACT YOUTUBE CHANNEL VIDEO GRID
       ───────────────────────────────────────────────────────────── */}
       <section>
-        <div className="flex items-center justify-between text-xs text-neutral-400 mb-3 px-0.5">
-          <span>{filteredChannels.length} Live Channels Available</span>
-          <span className="font-mono text-[11px] text-neutral-500">CLICK TO WATCH</span>
-        </div>
+        {searchQuery.trim() ? (
+          <div className="mb-3 p-3 rounded-xl bg-rose-950/25 border border-rose-900/50 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-neutral-300">
+                Showing <strong className="text-white">{filteredChannels.length}</strong> match
+                {filteredChannels.length === 1 ? '' : 'es'} for{' '}
+                <span className="text-rose-300 font-semibold">&ldquo;{searchQuery.trim()}&rdquo;</span>
+                {selectedCategory !== 'All' && (
+                  <span className="text-neutral-400"> in {selectedCategory}</span>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {selectedCategory !== 'All' && totalUnfilteredMatches > filteredChannels.length && (
+                <button
+                  type="button"
+                  onClick={() => onSelectCategory('All')}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-600/40 text-[11px] font-semibold transition-colors"
+                >
+                  Search all categories ({totalUnfilteredMatches})
+                </button>
+              )}
+              {onSearchChange && (
+                <button
+                  type="button"
+                  onClick={() => onSearchChange('')}
+                  className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 text-[11px] font-medium transition-colors"
+                >
+                  Clear search
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between text-xs text-neutral-400 mb-3 px-0.5">
+            <span>{filteredChannels.length} Live Channels Available</span>
+            <span className="font-mono text-[11px] text-neutral-500">CLICK TO WATCH</span>
+          </div>
+        )}
 
         {filteredChannels.length === 0 ? (
-          <div className="p-12 text-center rounded-2xl bg-neutral-900/40 border border-neutral-800 flex flex-col items-center justify-center">
+          <div className="p-10 text-center rounded-2xl bg-neutral-900/40 border border-neutral-800 flex flex-col items-center justify-center">
             <Tv className="w-10 h-10 text-neutral-600 mb-2" />
             <h3 className="text-sm font-bold text-white">No channels found</h3>
-            <p className="text-xs text-neutral-400 max-w-sm mt-1">
-              Try searching with a different channel name, number, or category.
+            <p className="text-xs text-neutral-400 max-w-md mt-1">
+              {searchQuery.trim()
+                ? selectedCategory !== 'All' && totalUnfilteredMatches > 0
+                  ? `No matches in "${selectedCategory}", but ${totalUnfilteredMatches} channel${totalUnfilteredMatches === 1 ? '' : 's'} matched across other categories.`
+                  : 'Try searching by channel name, #number (like #12), country, language, or live show title.'
+                : 'No channels matched the selected category filter.'}
             </p>
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+              {selectedCategory !== 'All' && (
+                <button
+                  type="button"
+                  onClick={() => onSelectCategory('All')}
+                  className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors"
+                >
+                  {totalUnfilteredMatches > 0
+                    ? `Show ${totalUnfilteredMatches} matches in All Categories`
+                    : 'Show All Categories'}
+                </button>
+              )}
+              {searchQuery.trim() && onSearchChange && (
+                <button
+                  type="button"
+                  onClick={() => onSearchChange('')}
+                  className="px-3.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold transition-colors"
+                >
+                  Clear Search
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div
@@ -660,14 +731,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     <div className="min-w-0 flex-1">
                       {/* Program Title */}
                       <h4 className="text-xs font-bold text-white truncate leading-tight group-hover:text-rose-400 transition-colors">
-                        {prog?.title || ch.name}
+                        <HighlightText text={prog?.title || ch.name} query={searchQuery} />
                       </h4>
 
                       {/* Channel Name and Category (Clean unboxed metadata) */}
                       <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 truncate mt-0.5">
-                        <span className="font-medium text-neutral-300 truncate">{ch.name}</span>
+                        <HighlightText
+                          text={ch.name}
+                          query={searchQuery}
+                          className="font-medium text-neutral-300 truncate"
+                        />
                         <span aria-hidden="true" className="text-neutral-600">·</span>
-                        <span className="text-neutral-500 truncate">{ch.group}</span>
+                        <HighlightText
+                          text={ch.group}
+                          query={searchQuery}
+                          className="text-neutral-500 truncate"
+                        />
                       </div>
                     </div>
                   </div>

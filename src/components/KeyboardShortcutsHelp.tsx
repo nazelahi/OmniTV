@@ -13,6 +13,7 @@ export const KeyboardShortcutsHelp: React.FC<KeyboardShortcutsHelpProps> = ({
   if (!isOpen) return null;
 
   const shortcuts = [
+    { key: '/ or Ctrl+K', desc: 'Focus live channel & program search' },
     { key: '↓ / ↑', desc: 'Previous / Next Channel' },
     { key: '0 - 9', desc: 'Type channel number to switch directly' },
     { key: 'Space', desc: 'Play / Pause stream' },

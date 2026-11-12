@@ -507,11 +507,18 @@ export default function App() {
         onToggleSidebar={() => setIsSidebarCollapsed((prev) => !prev)}
         isSidebarOpen={!isSidebarCollapsed}
         searchQuery={searchQuery}
-        onSearchChange={(q) => {
-          setSearchQuery(q);
-          // Typing in the global search takes the user to the results grid
-          if (q.trim() && currentView !== 'home') setCurrentView('home');
+        onSearchChange={(q) => setSearchQuery(q)}
+        onSubmitSearch={() => {
+          if (currentView !== 'home') setCurrentView('home');
         }}
+        channels={currentPlaylist.channels}
+        groups={currentPlaylist.groups}
+        epgData={epgData}
+        onSelectChannel={(ch) => {
+          handleSelectChannel(ch);
+          setCurrentView('player');
+        }}
+        onSelectCategory={setSelectedCategory}
         onOpenPlaylistModal={() => setIsPlaylistModalOpen(true)}
         onOpenAdmin={() => setIsAdminOpen(true)}
         onToggleRemote={() => setIsRemoteOpen((prev) => !prev)}
