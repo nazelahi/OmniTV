@@ -205,10 +205,10 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
         </div>
 
         {/* Modal Tabs */}
-        <div className="flex border-b border-neutral-800 bg-neutral-950/50 px-4 pt-2 gap-2 text-xs font-semibold">
+        <div className="flex border-b border-neutral-800 bg-neutral-950/50 px-3 sm:px-4 pt-2 gap-1.5 sm:gap-2 text-xs font-semibold overflow-x-auto scrollbar-none">
           <button
             onClick={() => setActiveTab('url')}
-            className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+            className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
               activeTab === 'url'
                 ? 'border-rose-500 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
@@ -220,7 +220,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
 
           <button
             onClick={() => setActiveTab('file')}
-            className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+            className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
               activeTab === 'file'
                 ? 'border-rose-500 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
@@ -232,7 +232,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
 
           <button
             onClick={() => setActiveTab('paste')}
-            className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+            className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
               activeTab === 'paste'
                 ? 'border-rose-500 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'
@@ -244,7 +244,7 @@ export const PlaylistModal: React.FC<PlaylistModalProps> = ({
 
           <button
             onClick={() => setActiveTab('library')}
-            className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+            className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
               activeTab === 'library'
                 ? 'border-rose-500 text-white'
                 : 'border-transparent text-neutral-400 hover:text-neutral-200'

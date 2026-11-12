@@ -20,6 +20,7 @@ import { Channel } from '../types/playlist';
 
 interface SidebarProps {
   isCollapsed: boolean;
+  isMobile?: boolean;
   currentView: 'home' | 'player' | 'epg';
   onViewChange: (view: 'home' | 'player' | 'epg') => void;
   onClose?: () => void;
@@ -31,6 +32,9 @@ interface SidebarProps {
   onOpenAdmin: () => void;
   onToggleRemote: () => void;
   isRemoteOpen: boolean;
+  appName?: string;
+  appLogo?: string;
+  appTagline?: string;
 }
 
 const RemoteIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -45,6 +49,7 @@ const RemoteIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' })
 
 export const Sidebar: React.FC<SidebarProps> = ({
   isCollapsed,
+  isMobile: isMobileProp,
   currentView,
   onViewChange,
   selectedCategory,
@@ -56,11 +61,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleRemote,
   isRemoteOpen,
   onClose,
+  appName,
+  appLogo,
+  appTagline,
 }) => {
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const [detectedMobile, setDetectedMobile] = React.useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
+
+  React.useEffect(() => {
+    if (isMobileProp !== undefined || typeof window === 'undefined') return;
+    const mql = window.matchMedia('(max-width: 767px)');
+    const onChange = () => setDetectedMobile(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [isMobileProp]);
+
+  const isMobile = isMobileProp ?? detectedMobile;
 
   const handleViewChange = (view: 'home' | 'player' | 'epg') => {
     onViewChange(view);
+    if (isMobile) {
+      onClose?.();
+    }
+  };
+
+  const handleMobileAction = (action: () => void) => {
+    action();
     if (isMobile) {
       onClose?.();
     }
@@ -156,18 +184,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* Mobile backdrop */}
-      { !isCollapsed && (
+      {!isCollapsed && (
         <div
-          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-xs md:hidden"
           onClick={onClose}
+          aria-hidden="true"
         />
-      ) }
-      <aside className={`fixed md:static inset-y-0 left-0 z-40 w-60 bg-[#0a0204]/95 md:bg-[#0a0204]/70 backdrop-blur-xl border-r border-rose-950/40 shrink-0 flex flex-col py-3 px-3 overflow-y-auto select-none space-y-4 transform transition-transform duration-200 md:transform-none ${isCollapsed ? '-translate-x-full' : 'translate-x-0'}`}>
-        {/* Mobile close button */}
-        <div className="flex justify-end md:hidden">
+      )}
+      <aside
+        aria-hidden={isMobile && isCollapsed}
+        className={`fixed md:static inset-y-0 left-0 z-50 md:z-20 w-64 md:w-60 bg-[#0a0204]/98 md:bg-[#0a0204]/70 backdrop-blur-xl border-r border-rose-950/40 shrink-0 flex flex-col py-3 px-3 overflow-y-auto select-none space-y-4 transform transition-transform duration-200 md:transform-none ${
+          isCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0'
+        }`}
+      >
+        {/* Mobile Drawer Header */}
+        <div className="flex items-center justify-between pb-2 border-b border-rose-950/40 md:hidden">
+          <div className="flex items-center gap-2 px-1 min-w-0">
+            {appLogo ? (
+              <img src={appLogo} alt={appName || 'App'} className="w-7 h-5 object-contain shrink-0" />
+            ) : (
+              <div className="w-7 h-5 bg-rose-600 rounded-md flex items-center justify-center shadow-sm shrink-0">
+                <div className="w-0 h-0 border-y-[4px] border-y-transparent border-l-[7px] border-l-white ml-0.5" />
+              </div>
+            )}
+            <span className="text-sm font-black tracking-tight text-white truncate">{appName || 'OmniStream TV'}</span>
+          </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0"
             aria-label="Close menu"
           >
             <X className="w-5 h-5" />
@@ -289,7 +333,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <button
-          onClick={onToggleRemote}
+          onClick={() => handleMobileAction(onToggleRemote)}
           className={`w-full flex items-center gap-4 px-3 py-2 rounded-xl text-sm transition-colors ${
             isRemoteOpen
               ? 'bg-rose-950/40 text-rose-400 font-semibold'
@@ -301,7 +345,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
-          onClick={onOpenPlaylistModal}
+          onClick={() => handleMobileAction(onOpenPlaylistModal)}
           className="w-full flex items-center gap-4 px-3 py-2 rounded-xl text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors"
         >
           <UploadCloud className="w-4 h-4 text-neutral-400" />
@@ -309,7 +353,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
 
         <button
-          onClick={onOpenAdmin}
+          onClick={() => handleMobileAction(onOpenAdmin)}
           className="w-full flex items-center gap-4 px-3 py-2 rounded-xl text-sm text-neutral-300 hover:text-rose-400 hover:bg-neutral-900 transition-colors"
         >
           <Shield className="w-4 h-4 text-rose-500" />
@@ -318,8 +362,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="pt-4 px-3 text-[11px] text-neutral-600 leading-normal">
-        <p>OmniStream TV v2.0</p>
-        <p className="mt-1">Continuous Live HLS Broadcast</p>
+        <p className="truncate">{appName || 'OmniStream TV'}</p>
+        <p className="mt-1 truncate">{appTagline || 'Live TV Broadcast'}</p>
       </div>
     </aside>
     </>

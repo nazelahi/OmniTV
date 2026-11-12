@@ -20,7 +20,7 @@ import {
   Tv,
 } from 'lucide-react';
 import { Channel, SiteConfig } from '../types/playlist';
-import { SAMPLE_PLAYLIST_PRESETS } from '../utils/defaultChannels';
+import { SAMPLE_PLAYLIST_PRESETS, DEFAULT_PLAYLIST_URL } from '../utils/defaultChannels';
 
 interface AdminPanelProps {
   isOpen: boolean;
@@ -156,10 +156,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Test Playlist URL via backend
   const handleTestUrl = async () => {
-    if (!playlistUrl.trim()) {
-      setTestResult({ success: false, error: 'Please enter a playlist URL to test.' });
-      return;
-    }
+    const targetUrl = playlistUrl.trim() || DEFAULT_PLAYLIST_URL;
 
     setIsTestingUrl(true);
     setTestResult(null);
@@ -172,7 +169,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ url: playlistUrl.trim() }),
+        body: JSON.stringify({ url: targetUrl }),
       });
 
       const data = await res.json();
@@ -193,9 +190,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setSaveSuccess(null);
     setSaveError(null);
 
+    const resolvedUrl = playlistUrl.trim() || DEFAULT_PLAYLIST_URL;
     const payload: Partial<SiteConfig> = {
-      playlistUrl: playlistUrl.trim(),
-      playlistName: playlistName.trim() || 'OmniStream TV Global',
+      playlistUrl: resolvedUrl,
+      playlistName: playlistName.trim() || (resolvedUrl === DEFAULT_PLAYLIST_URL ? 'BDIX IPTV' : 'OmniStream TV Global'),
       epgUrl: epgUrl.trim(),
       autoRefreshMinutes,
       disabledChannelIds,
@@ -413,10 +411,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           /* Authenticated Admin Workspace */
           <div className="flex flex-col flex-1 overflow-hidden">
             {/* Admin Tabs */}
-            <div className="flex border-b border-neutral-800 bg-neutral-950/60 px-4 pt-2 gap-2 text-xs font-semibold">
+            <div className="flex border-b border-neutral-800 bg-neutral-950/60 px-3 sm:px-4 pt-2 gap-1.5 sm:gap-2 text-xs font-semibold overflow-x-auto scrollbar-none">
               <button
                 onClick={() => setActiveTab('playlist')}
-                className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+                className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
                   activeTab === 'playlist'
                     ? 'border-rose-500 text-white'
                     : 'border-transparent text-neutral-400 hover:text-neutral-200'
@@ -428,7 +426,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               <button
                 onClick={() => setActiveTab('channels')}
-                className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+                className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
                   activeTab === 'channels'
                     ? 'border-rose-500 text-white'
                     : 'border-transparent text-neutral-400 hover:text-neutral-200'
@@ -439,20 +437,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </button>
 
               <button
-                onClick={() => setActiveTab('settings')}
-                className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
-                  activeTab === 'settings'
-                    ? 'border-rose-500 text-white'
-                    : 'border-transparent text-neutral-400 hover:text-neutral-200'
-                }`}
-              >
-                <Sliders className="w-3.5 h-3.5 text-neutral-400" />
-                <span>Security & Backup</span>
-              </button>
-
-              <button
                 onClick={() => setActiveTab('branding')}
-                className={`flex items-center gap-2 pb-2.5 px-3 border-b-2 transition-colors ${
+                className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
                   activeTab === 'branding'
                     ? 'border-rose-500 text-white'
                     : 'border-transparent text-neutral-400 hover:text-neutral-200'
@@ -460,6 +446,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 <Shield className="w-3.5 h-3.5 text-rose-500" />
                 <span>Branding</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('settings')}
+                className={`flex items-center gap-1.5 sm:gap-2 pb-2.5 px-2.5 sm:px-3 border-b-2 shrink-0 whitespace-nowrap transition-colors ${
+                  activeTab === 'settings'
+                    ? 'border-rose-500 text-white'
+                    : 'border-transparent text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Security & Backup</span>
               </button>
             </div>
 
@@ -488,16 +486,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <label className="text-xs font-bold text-neutral-200">
                       Primary Live TV Playlist URL (.m3u / .m3u8)
                     </label>
-                    <span className="text-[11px] text-neutral-400">
-                      Bypasses browser CORS via server proxy
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlaylistUrl(DEFAULT_PLAYLIST_URL);
+                        setPlaylistName('BDIX IPTV');
+                        setTestResult(null);
+                      }}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold transition-colors"
+                    >
+                      Use Default Playlist
+                    </button>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="url"
                       value={playlistUrl}
                       onChange={(e) => setPlaylistUrl(e.target.value)}
-                      placeholder="https://example.com/playlist.m3u8 or iptv url"
+                      placeholder={DEFAULT_PLAYLIST_URL}
                       className="flex-1 px-3.5 py-2.5 bg-neutral-950 border border-neutral-700 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500 font-mono"
                     />
                     <button

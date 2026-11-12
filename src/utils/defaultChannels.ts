@@ -152,10 +152,13 @@ export const DEFAULT_CHANNELS: Channel[] = [
   },
 ];
 
+export const DEFAULT_PLAYLIST_URL =
+  'https://raw.githubusercontent.com/saeidrahmanbd/BDIX-IPTV/main/IPTV-Playlist.m3u';
+
 export const DEFAULT_PLAYLIST: Playlist = {
   id: 'curated-default',
-  name: 'Curated Global Live TV',
-  url: 'https://iptv-org.github.io/iptv/index.m3u',
+  name: 'BDIX IPTV',
+  url: DEFAULT_PLAYLIST_URL,
   channels: DEFAULT_CHANNELS,
   groups: ['Favorites', 'News', 'Sports', 'Science & Nature', 'Movies & Cinema', 'Music & Radio'],
   updatedAt: new Date().toISOString(),
@@ -164,11 +167,17 @@ export const DEFAULT_PLAYLIST: Playlist = {
 
 export const SAMPLE_PLAYLIST_PRESETS = [
   {
-    title: 'Curated Global Live TV (Recommended)',
+    title: 'Curated Global Live TV (Offline Fallback)',
     desc: 'Tested, instant-loading legal live streams for News, Sports, Science, Cinema, and Music.',
     url: '',
     channelCount: DEFAULT_CHANNELS.length,
     isPresetDefault: true,
+  },
+  {
+    title: 'BDIX IPTV (Default Playlist)',
+    desc: 'Default remote M3U playlist loaded automatically when no custom URL is configured in Admin Panel.',
+    url: DEFAULT_PLAYLIST_URL,
+    channelCount: 0,
   },
   {
     title: 'IPTV-org English Channels (Global)',

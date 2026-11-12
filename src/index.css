@@ -41,3 +41,13 @@ html, body {
 video {
   outline: none;
 }
+
+/* Touch optimizations for mobile viewports */
+button, a, input, select {
+  touch-action: manipulation;
+}
+
+/* Prevent layout jump and overscroll bounce on mobile */
+html {
+  overscroll-behavior-y: none;
+}

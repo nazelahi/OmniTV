@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { Channel, Playlist, StreamDiagnostics, SiteConfig, EPGProgram } from './types/playlist';
-import { DEFAULT_PLAYLIST, DEFAULT_CHANNELS } from './utils/defaultChannels';
+import { DEFAULT_PLAYLIST, DEFAULT_CHANNELS, DEFAULT_PLAYLIST_URL } from './utils/defaultChannels';
 import { parseM3U } from './utils/m3uParser';
 import { parseXMLTV } from './utils/epgParser';
 import { YouTubeTopBar } from './components/YouTubeTopBar';
@@ -13,7 +13,7 @@ const PlaylistModal = lazy(() => import('./components/PlaylistModal').then((m) =
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal').then((m) => ({ default: m.DiagnosticsModal })));
 const KeyboardShortcutsHelp = lazy(() => import('./components/KeyboardShortcutsHelp').then((m) => ({ default: m.KeyboardShortcutsHelp })));
 const AdminPanel = lazy(() => import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })));
-import { RefreshCw, Home, Radio, Layers, Menu } from 'lucide-react';
+import { RefreshCw, Home, Radio, Layers, Menu, Tv } from 'lucide-react';
 
 export default function App() {
   // Load saved playlists or default
@@ -78,10 +78,37 @@ export default function App() {
   // YouTube View state: 'home' | 'player' | 'epg'
   const [currentView, setCurrentView] = useState<'home' | 'player' | 'epg'>('home');
 
-  // YouTube Sidebar state
+  // Responsive mobile detection & YouTube Sidebar state
+  const [isMobile, setIsMobile] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia('(max-width: 767px)');
+    const handleBreakpoint = (e: MediaQueryListEvent | MediaQueryList) => {
+      const mobile = e.matches;
+      setIsMobile(mobile);
+      // Auto-collapse overlay drawer when entering mobile; expand rail cleanly on desktop
+      setIsSidebarCollapsed(mobile);
+    };
+    handleBreakpoint(mql);
+    mql.addEventListener('change', handleBreakpoint);
+    return () => mql.removeEventListener('change', handleBreakpoint);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile || isSidebarCollapsed) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsSidebarCollapsed(true);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isMobile, isSidebarCollapsed]);
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
@@ -173,25 +200,23 @@ export default function App() {
         }
       }
 
-      if (!currentCfg || !currentCfg.playlistUrl) {
-        setIsSiteSyncing(false);
-        return false;
-      }
+      const effectivePlaylistUrl = currentCfg?.playlistUrl?.trim() || DEFAULT_PLAYLIST_URL;
+      const effectivePlaylistName = currentCfg?.playlistName?.trim() || DEFAULT_PLAYLIST.name;
 
-      const playlistRes = await fetch(`/api/fetch-playlist?url=${encodeURIComponent(currentCfg.playlistUrl)}`);
+      const playlistRes = await fetch(`/api/fetch-playlist?url=${encodeURIComponent(effectivePlaylistUrl)}`);
       if (!playlistRes.ok) {
         throw new Error(`Server returned HTTP ${playlistRes.status}`);
       }
 
       const m3uText = await playlistRes.text();
-      const parsed = parseM3U(m3uText, currentCfg.playlistName || 'OmniStream Live TV', currentCfg.playlistUrl);
+      const parsed = parseM3U(m3uText, effectivePlaylistName, effectivePlaylistUrl);
 
       let combinedChannels = [...parsed.channels];
-      if (Array.isArray(currentCfg.customChannels) && currentCfg.customChannels.length > 0) {
+      if (Array.isArray(currentCfg?.customChannels) && currentCfg.customChannels.length > 0) {
         combinedChannels = [...currentCfg.customChannels, ...combinedChannels];
       }
 
-      if (Array.isArray(currentCfg.disabledChannelIds) && currentCfg.disabledChannelIds.length > 0) {
+      if (Array.isArray(currentCfg?.disabledChannelIds) && currentCfg.disabledChannelIds.length > 0) {
         const disabledSet = new Set(currentCfg.disabledChannelIds);
         combinedChannels = combinedChannels.filter((c) => !disabledSet.has(c.id));
       }
@@ -219,9 +244,9 @@ export default function App() {
 
         const globalPlaylist: Playlist = {
           id: 'global-server-playlist',
-          name: currentCfg.playlistName || 'Primary Live TV',
-          url: currentCfg.playlistUrl,
-          epgUrl: currentCfg.epgUrl || parsed.epgUrl || undefined,
+          name: effectivePlaylistName,
+          url: effectivePlaylistUrl,
+          epgUrl: currentCfg?.epgUrl || parsed.epgUrl || undefined,
           channels: combinedChannels.map((ch) =>
             favoriteIds.has(ch.id) ? { ...ch, isFavorite: true } : ch
           ),
@@ -253,18 +278,24 @@ export default function App() {
     }
   }, [handleSelectChannel]);
 
-  // Initial load: check server config
+  // Initial load: check server config, falling back to DEFAULT_PLAYLIST_URL when unconfigured
   useEffect(() => {
     fetch('/api/config')
       .then((res) => res.json())
       .then((cfg: SiteConfig) => {
         setSiteConfig(cfg || null);
-        if (cfg && cfg.playlistUrl) {
-          reloadFromRemoteUrl(cfg);
-        }
+        reloadFromRemoteUrl(cfg);
       })
       .catch((err) => {
-        console.warn('Backend server not reachable, using offline default playlist:', err);
+        console.warn('Backend config unavailable, loading default remote playlist:', err);
+        reloadFromRemoteUrl({
+          playlistUrl: DEFAULT_PLAYLIST_URL,
+          playlistName: DEFAULT_PLAYLIST.name,
+          autoRefreshMinutes: 60,
+          customChannels: [],
+          disabledChannelIds: [],
+          lastUpdated: new Date().toISOString(),
+        });
       });
   }, [reloadFromRemoteUrl]);
 
@@ -474,6 +505,7 @@ export default function App() {
       {/* 1. Full YouTube-style Top Bar */}
       <YouTubeTopBar
         onToggleSidebar={() => setIsSidebarCollapsed((prev) => !prev)}
+        isSidebarOpen={!isSidebarCollapsed}
         searchQuery={searchQuery}
         onSearchChange={(q) => {
           setSearchQuery(q);
@@ -503,6 +535,7 @@ export default function App() {
         {/* YouTube Collapsible Left Sidebar */}
         <Sidebar
           isCollapsed={isSidebarCollapsed}
+          isMobile={isMobile}
           currentView={currentView}
           onViewChange={setCurrentView}
           selectedCategory={selectedCategory}
@@ -514,10 +547,13 @@ export default function App() {
           onToggleRemote={() => setIsRemoteOpen((prev) => !prev)}
           isRemoteOpen={isRemoteOpen}
           onClose={() => setIsSidebarCollapsed(true)}
+          appName={siteConfig?.appName}
+          appLogo={siteConfig?.appLogo}
+          appTagline={siteConfig?.appTagline}
         />
 
         {/* Main View Area */}
-        <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 pt-0 pb-16 md:pb-4">
+        <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 pt-0 pb-24 md:pb-6">
           <div className="max-w-[1700px] w-full mx-auto">
             {currentView === 'home' ? (
               <HomeScreen
@@ -555,7 +591,7 @@ export default function App() {
               />
             ) : (
               /* Fullscreen EPG Schedule Guide View */
-              <div className="h-[calc(100vh-100px)]">
+              <div className="h-[calc(100dvh-135px)] md:h-[calc(100dvh-85px)]">
                 <EPGScheduleGuide
                   channels={currentPlaylist.channels}
                   activeChannel={activeChannel}
@@ -574,6 +610,65 @@ export default function App() {
         </main>
       </div>
 
+      {/* Mobile Bottom Navigation Bar (Thumb-zone anchor) */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#0a0204]/95 backdrop-blur-2xl border-t border-rose-950/60 flex items-center justify-around px-2 py-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl shadow-black">
+        <button
+          onClick={() => setCurrentView('home')}
+          className={`min-h-[44px] min-w-[44px] relative flex flex-col items-center justify-center gap-0.5 px-2.5 rounded-xl transition-all ${
+            currentView === 'home' ? 'text-rose-500 font-bold' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Home className={`w-5 h-5 ${currentView === 'home' ? 'fill-rose-500/20' : ''}`} />
+          <span className="text-[10px] tracking-tight">Home</span>
+          {currentView === 'home' && <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+
+        <button
+          onClick={() => setCurrentView('player')}
+          className={`min-h-[44px] min-w-[44px] relative flex flex-col items-center justify-center gap-0.5 px-2.5 rounded-xl transition-all ${
+            currentView === 'player' ? 'text-rose-500 font-bold' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Radio className={`w-5 h-5 ${currentView === 'player' ? 'fill-rose-500/20' : ''}`} />
+          <span className="text-[10px] tracking-tight">Live TV</span>
+          {currentView === 'player' && <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+
+        <button
+          onClick={() => setCurrentView('epg')}
+          className={`min-h-[44px] min-w-[44px] relative flex flex-col items-center justify-center gap-0.5 px-2.5 rounded-xl transition-all ${
+            currentView === 'epg' ? 'text-rose-500 font-bold' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Layers className={`w-5 h-5 ${currentView === 'epg' ? 'fill-rose-500/20' : ''}`} />
+          <span className="text-[10px] tracking-tight">Guide</span>
+          {currentView === 'epg' && <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+
+        <button
+          onClick={() => setIsRemoteOpen((prev) => !prev)}
+          className={`min-h-[44px] min-w-[44px] relative flex flex-col items-center justify-center gap-0.5 px-2.5 rounded-xl transition-all ${
+            isRemoteOpen ? 'text-rose-500 font-bold' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Tv className="w-5 h-5" />
+          <span className="text-[10px] tracking-tight">Remote</span>
+          {isRemoteOpen && <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+
+        <button
+          onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+          aria-expanded={!isSidebarCollapsed}
+          className={`min-h-[44px] min-w-[44px] relative flex flex-col items-center justify-center gap-0.5 px-2.5 rounded-xl transition-all ${
+            !isSidebarCollapsed ? 'text-rose-500 font-bold' : 'text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Menu className="w-5 h-5" />
+          <span className="text-[10px] tracking-tight">Menu</span>
+          {!isSidebarCollapsed && <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
+        </button>
+      </nav>
+
       {/* Floating Virtual TV Remote Controller */}
       <VirtualRemote
         isOpen={isRemoteOpen}
@@ -590,82 +685,41 @@ export default function App() {
 
       {/* Lazy-loaded modals */}
       <Suspense fallback={null}>
-      {/* Admin Panel Modal */}
-      <AdminPanel
-        isOpen={isAdminOpen}
-        onClose={() => setIsAdminOpen(false)}
-        onConfigSaved={(updatedCfg) => {
-          setSiteConfig(updatedCfg);
-        }}
-        onForceReloadChannels={() => reloadFromRemoteUrl()}
-        channels={currentPlaylist.channels}
-      />
+        {/* Admin Panel Modal */}
+        <AdminPanel
+          isOpen={isAdminOpen}
+          onClose={() => setIsAdminOpen(false)}
+          onConfigSaved={(updatedCfg) => {
+            setSiteConfig(updatedCfg);
+          }}
+          onForceReloadChannels={() => reloadFromRemoteUrl()}
+          channels={currentPlaylist.channels}
+        />
 
-      {/* Playlist Import / Management Modal */}
-      <PlaylistModal
-        isOpen={isPlaylistModalOpen}
-        onClose={() => setIsPlaylistModalOpen(false)}
-        onLoadPlaylist={handleLoadPlaylist}
-        savedPlaylists={playlists}
-        activePlaylistId={activePlaylistId}
-        onDeletePlaylist={handleDeletePlaylist}
-        currentPlaylist={currentPlaylist}
-      />
+        {/* Playlist Import / Management Modal */}
+        <PlaylistModal
+          isOpen={isPlaylistModalOpen}
+          onClose={() => setIsPlaylistModalOpen(false)}
+          onLoadPlaylist={handleLoadPlaylist}
+          savedPlaylists={playlists}
+          activePlaylistId={activePlaylistId}
+          onDeletePlaylist={handleDeletePlaylist}
+          currentPlaylist={currentPlaylist}
+        />
 
-      {/* Stream Technical Diagnostics Modal */}
-      <DiagnosticsModal
-        isOpen={isDiagnosticsOpen}
-        onClose={() => setIsDiagnosticsOpen(false)}
-        diagnostics={streamDiagnostics}
-        channel={activeChannel}
-      />
+        {/* Stream Technical Diagnostics Modal */}
+        <DiagnosticsModal
+          isOpen={isDiagnosticsOpen}
+          onClose={() => setIsDiagnosticsOpen(false)}
+          diagnostics={streamDiagnostics}
+          channel={activeChannel}
+        />
 
-      {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0a0204]/90 backdrop-blur-xl border-t border-rose-950/50 flex items-center justify-around px-1 py-1.5 pb-2">
-        <button
-          onClick={() => setCurrentView('home')}
-          className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
-            currentView === 'home' ? 'text-rose-500' : 'text-neutral-400 hover:text-neutral-200'
-          }`}
-        >
-          <Home className={`w-5 h-5 ${currentView === 'home' ? 'fill-rose-500/20' : ''}`} />
-          <span className="text-[9px] font-semibold">Home</span>
-          {currentView === 'home' && <span className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
-        </button>
-        <button
-          onClick={() => setCurrentView('player')}
-          className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
-            currentView === 'player' ? 'text-rose-500' : 'text-neutral-400 hover:text-neutral-200'
-          }`}
-        >
-          <Radio className={`w-5 h-5 ${currentView === 'player' ? 'fill-rose-500/20' : ''}`} />
-          <span className="text-[9px] font-semibold">Live TV</span>
-          {currentView === 'player' && <span className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
-        </button>
-        <button
-          onClick={() => setCurrentView('epg')}
-          className={`relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
-            currentView === 'epg' ? 'text-rose-500' : 'text-neutral-400 hover:text-neutral-200'
-          }`}
-        >
-          <Layers className={`w-5 h-5 ${currentView === 'epg' ? 'fill-rose-500/20' : ''}`} />
-          <span className="text-[9px] font-semibold">Guide</span>
-          {currentView === 'epg' && <span className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-rose-500" />}
-        </button>
-        <button
-          onClick={() => setIsSidebarCollapsed(false)}
-          className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-neutral-400 hover:text-neutral-200 transition-all"
-        >
-          <Menu className="w-5 h-5" />
-          <span className="text-[9px] font-semibold">Menu</span>
-        </button>
-      </nav>
-
-      {/* Keyboard Shortcuts Help Modal */}
-      <KeyboardShortcutsHelp
-        isOpen={isShortcutsOpen}
-        onClose={() => setIsShortcutsOpen(false)}
-      />
+        {/* Keyboard Shortcuts Help Modal */}
+        <KeyboardShortcutsHelp
+          isOpen={isShortcutsOpen}
+          onClose={() => setIsShortcutsOpen(false)}
+        />
       </Suspense>
     </div>
   );

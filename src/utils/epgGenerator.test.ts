@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { withLiveTiming } from './epgGenerator';
-import type { EPGProgram } from '../types/playlist';
+import { withLiveTiming, getChannelSchedule } from './epgGenerator';
+import type { Channel, EPGProgram } from '../types/playlist';
 
 const base: EPGProgram = {
   id: 'p1',
@@ -13,6 +13,17 @@ const base: EPGProgram = {
   durationMinutes: 60,
   progressPercent: 0,
   isLive: false,
+};
+
+const sampleChannel: Channel = {
+  id: 'ch-test',
+  name: 'Test Sports HD',
+  url: 'https://example.com/stream.m3u8',
+  group: 'Sports',
+  channelNumber: 12,
+  tvgId: 'TestSports.us',
+  country: 'USA',
+  language: 'English',
 };
 
 describe('withLiveTiming', () => {
@@ -35,5 +46,23 @@ describe('withLiveTiming', () => {
     const p = withLiveTiming(base, now);
     expect(p.isLive).toBe(false);
     expect(p.progressPercent).toBe(0);
+  });
+});
+
+describe('getChannelSchedule', () => {
+  it('generates dynamic channel-aware schedule when no XMLTV map is passed', () => {
+    const schedule = getChannelSchedule(sampleChannel, new Date('2026-11-12T20:15:00'));
+    expect(schedule.length).toBeGreaterThan(0);
+    expect(schedule[0].title).toContain('Test Sports HD');
+    expect(schedule[0].description).toContain('Sports');
+    expect(schedule[0].poster).toBeTruthy();
+    expect(schedule.some((p) => p.isLive)).toBe(true);
+  });
+
+  it('prefers real XMLTV data matched by channel id or tvgId', () => {
+    const map = new Map<string, EPGProgram[]>([['TestSports.us', [base]]]);
+    const schedule = getChannelSchedule(sampleChannel, new Date(), map);
+    expect(schedule).toHaveLength(1);
+    expect(schedule[0].title).toBe('Show');
   });
 });

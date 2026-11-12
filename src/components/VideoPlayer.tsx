@@ -134,7 +134,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const streamUrl = channel.url;
-    const isHlsStream = /\.m3u8(\?|$)/i.test(streamUrl) || /\/hls\//i.test(streamUrl);
+    const isHlsStream = /\.m3u8(\?|$)/i.test(streamUrl) || /\/hls\//i.test(streamUrl) || /[?&]format=m3u8/i.test(streamUrl);
 
     if (isHlsStream && Hls.isSupported()) {
       const hls = new Hls({
@@ -240,14 +240,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         bufferedSeconds = Math.max(0, video.buffered.end(video.buffered.length - 1) - video.currentTime);
       }
 
+      const rawLatency = hls?.latency;
+      const liveLatency = typeof rawLatency === 'number' && Number.isFinite(rawLatency) ? parseFloat(rawLatency.toFixed(1)) : 0;
+
       setStreamDiagnostics({
         url: channel.url,
         currentResolution: currentResolution,
         availableResolutions: qualityLevels.map((q) => `${q.height}p`),
         bufferedSeconds: parseFloat(bufferedSeconds.toFixed(1)),
-        liveLatency: hls ? parseFloat(hls.latency.toFixed(1)) : 0,
+        liveLatency,
         droppedFrames: video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality().droppedVideoFrames : 0,
-        bandwidthKbps: hls && hls.bandwidthEstimate ? Math.round(hls.bandwidthEstimate / 1000) : 0,
+        bandwidthKbps: hls && Number.isFinite(hls.bandwidthEstimate) && hls.bandwidthEstimate ? Math.round(hls.bandwidthEstimate / 1000) : 0,
         isHls: !!hls,
         status: streamError ? 'error' : isBuffering ? 'buffering' : isPlaying ? 'playing' : 'idle',
         errorMessage: streamError || undefined,
@@ -423,13 +426,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  const handleVideoTap = () => {
+    if (!showControls) {
+      handleMouseMove();
+      return;
+    }
+    handleMouseMove();
+    togglePlay();
+  };
+
   return (
     <div
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
       className={`relative w-full bg-black overflow-hidden select-none flex items-center justify-center rounded-xl border border-neutral-800/80 shadow-2xl transition-all duration-300 ${
-        isFullscreen ? 'h-screen rounded-none border-none' : isTheaterMode ? 'h-[60vh] sm:h-[75vh]' : 'h-[30vh] sm:h-[45vh] md:h-[55vh] lg:h-[65vh]'
+        isFullscreen ? 'h-screen rounded-none border-none' : isTheaterMode ? 'aspect-video md:aspect-auto md:h-[75vh]' : 'aspect-video lg:aspect-auto lg:h-[65vh]'
       }`}
     >
       <video
@@ -439,7 +451,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onPlaying={handlePlaying}
         onPause={handlePause}
         onError={handleError}
-        onClick={togglePlay}
+        onClick={handleVideoTap}
         className={`transition-all duration-200 cursor-pointer ${getAspectClass()}`}
       />
 

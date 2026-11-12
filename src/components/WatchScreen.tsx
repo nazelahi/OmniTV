@@ -237,7 +237,7 @@ export const WatchScreen: React.FC<WatchScreenProps> = ({
         </div>
 
         {/* Right Column: YouTube-style "Channel Switcher / Up Next" Drawer */}
-        <div className={`${isTheaterMode ? 'w-full h-[60vh]' : 'lg:col-span-4 xl:col-span-4 h-[400px] sm:h-[500px] lg:h-auto'}`}>
+        <div className={`${isTheaterMode ? 'w-full h-[55vh]' : 'lg:col-span-4 xl:col-span-4 h-[460px] sm:h-[520px] lg:h-[calc(100vh-140px)] lg:sticky lg:top-2'}`}>
           <ChannelList
             channels={channels}
             activeChannel={channel}

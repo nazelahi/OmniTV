@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Clock, Play, Sparkles, Tv, Info, Search, X, Settings, ExternalLink } from 'lucide-react';
 import { Channel, EPGProgram } from '../types/playlist';
 import { getChannelSchedule, withLiveTiming } from '../utils/epgGenerator';
+import { getProgramPoster, generateDynamicPosterSvg } from '../utils/posterService';
 
 interface EPGScheduleGuideProps {
   channels: Channel[];
@@ -26,13 +27,16 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
   const [searchFilter, setSearchFilter] = useState<string>('');
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
   const [showSourceInfo, setShowSourceInfo] = useState<boolean>(false);
+  const [nowTick, setNowTick] = useState<number>(() => Math.floor(Date.now() / 60000));
 
-  // Re-render the guide every minute so the clock and live progress advance
-  const [now, setNow] = useState<Date>(() => new Date());
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(timer);
+    const id = setInterval(() => {
+      setNowTick(Math.floor(Date.now() / 60000));
+    }, 30000);
+    return () => clearInterval(id);
   }, []);
+
+  const now = useMemo(() => new Date(), [nowTick]);
 
   // Time slot columns (showing 6 hours in 30-min steps)
   const timeSlots = useMemo(() => {
@@ -65,6 +69,19 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
     channels.forEach((c) => set.add(c.group));
     return ['All', ...Array.from(set)];
   }, [channels]);
+
+  const schedulesByChannel = useMemo(() => {
+    const map = new Map<string, EPGProgram[]>();
+    const currentMs = now.getTime();
+    filteredChannels.forEach((ch) => {
+      const raw = getChannelSchedule(ch, now, epgData);
+      map.set(
+        ch.id,
+        raw.map((prog) => withLiveTiming(prog, currentMs))
+      );
+    });
+    return map;
+  }, [filteredChannels, now, epgData]);
 
   return (
     <div className="flex flex-col h-full bg-[#0a0204]/75 backdrop-blur-xl rounded-xl border border-rose-950/50 overflow-hidden shadow-xl shadow-rose-950/20">
@@ -164,9 +181,9 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
       <div className="flex-1 overflow-x-auto overflow-y-auto">
         <div className="min-w-[720px] sm:min-w-[900px]">
           {/* Timeline Time Header */}
-          <div className="flex border-b border-neutral-800 bg-neutral-950/80 sticky top-0 z-20">
+          <div className="flex border-b border-neutral-800 bg-neutral-950/95 sticky top-0 z-20">
             {/* Channel column header */}
-            <div className="w-56 p-3 text-xs font-semibold text-neutral-400 uppercase tracking-wider shrink-0 border-r border-neutral-800 bg-neutral-950">
+            <div className="sticky left-0 z-30 w-36 sm:w-56 p-3 text-xs font-semibold text-neutral-400 uppercase tracking-wider shrink-0 border-r border-neutral-800 bg-neutral-950">
               Channel
             </div>
 
@@ -187,7 +204,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
           <div className="divide-y divide-neutral-800/60">
             {filteredChannels.map((channel) => {
               const isActive = channel.id === activeChannel.id;
-              const schedule = getChannelSchedule(channel, now, epgData);
+              const schedule = schedulesByChannel.get(channel.id) || [];
 
               return (
                 <div
@@ -199,8 +216,8 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
                   {/* Channel Card Sticky Left Column */}
                   <div
                     onClick={() => onSelectChannel(channel)}
-                    className={`w-56 p-3 flex items-center justify-between gap-3 shrink-0 border-r border-neutral-800 cursor-pointer bg-neutral-950/90 ${
-                      isActive ? 'border-l-4 border-l-rose-500 bg-neutral-900' : ''
+                    className={`sticky left-0 z-10 w-36 sm:w-56 p-2 sm:p-3 flex items-center justify-between gap-2 sm:gap-3 shrink-0 border-r border-neutral-800 cursor-pointer ${
+                      isActive ? 'bg-[#1c060c] ring-1 ring-inset ring-rose-500/40 text-white' : 'bg-[#0a0204]'
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -248,8 +265,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
                   {/* Horizontal Program Blocks */}
                   <div className="flex-1 flex items-stretch p-1.5 gap-1.5 overflow-hidden">
                     {schedule.slice(0, 8).map((prog) => {
-                      const liveProg = withLiveTiming(prog);
-                      const isNow = liveProg.isLive;
+                      const isNow = prog.isLive;
                       // approximate width based on duration (30min = 176px approx)
                       const widthPx = Math.max(140, Math.round((prog.durationMinutes / 30) * 176));
 
@@ -294,7 +310,7 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
                             <div className="w-full bg-neutral-800 h-1 rounded-full overflow-hidden mt-2">
                               <div
                                 className="bg-rose-500 h-full rounded-full"
-                                style={{ width: `${liveProg.progressPercent}%` }}
+                                style={{ width: `${prog.progressPercent}%` }}
                               />
                             </div>
                           )}
@@ -319,6 +335,30 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
             >
               <X className="w-5 h-5" />
             </button>
+
+            {/* Dynamic Program Poster Banner */}
+            {(() => {
+              const poster = getProgramPoster(selectedProgram.program, selectedProgram.channel);
+              return (
+                <div className="relative aspect-video rounded-xl bg-neutral-950 overflow-hidden mb-4 border border-rose-950/60">
+                  <img
+                    src={poster}
+                    alt={selectedProgram.program.title}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      const target = e.currentTarget as HTMLImageElement;
+                      target.src = generateDynamicPosterSvg(
+                        selectedProgram.program.title,
+                        selectedProgram.program.category,
+                        selectedProgram.channel.name,
+                        selectedProgram.channel.channelNumber
+                      );
+                    }}
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
+                </div>
+              );
+            })()}
 
             <div className="flex items-center gap-3 mb-4">
               <span className="px-2.5 py-1 bg-rose-600 font-mono font-bold text-xs text-white rounded">

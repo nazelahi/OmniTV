@@ -191,15 +191,19 @@ interface SiteConfig {
   accentColor?: string;
 }
 
+const FALLBACK_DEFAULT_PLAYLIST_URL =
+  'https://raw.githubusercontent.com/saeidrahmanbd/BDIX-IPTV/main/IPTV-Playlist.m3u';
+const FALLBACK_DEFAULT_PLAYLIST_NAME = 'BDIX IPTV';
+
 const DEFAULT_CONFIG: SiteConfig = {
-  playlistUrl: '',
-  playlistName: 'OmniStream TV Global',
-  epgUrl: '',
-  autoRefreshMinutes: 60,
-  adminPin: '1234',
-  appName: 'OmniStream TV',
-  appTagline: 'Live TV',
-  primaryColor: '#e11d48',
+  playlistUrl: process.env.DEFAULT_PLAYLIST_URL || FALLBACK_DEFAULT_PLAYLIST_URL,
+  playlistName: process.env.DEFAULT_PLAYLIST_NAME || FALLBACK_DEFAULT_PLAYLIST_NAME,
+  epgUrl: process.env.DEFAULT_EPG_URL || '',
+  autoRefreshMinutes: Number(process.env.AUTO_REFRESH_MINUTES) || 60,
+  adminPin: process.env.ADMIN_PIN || '1234',
+  appName: process.env.APP_NAME || 'OmniStream TV',
+  appTagline: process.env.APP_TAGLINE || 'Live TV',
+  primaryColor: process.env.PRIMARY_COLOR || '#e11d48',
   customChannels: [],
   disabledChannelIds: [],
   lastUpdated: new Date().toISOString(),
@@ -210,7 +214,14 @@ function readConfig(): SiteConfig {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = fs.readFileSync(CONFIG_FILE, 'utf-8');
-      return { ...DEFAULT_CONFIG, ...JSON.parse(data) };
+      const merged: SiteConfig = { ...DEFAULT_CONFIG, ...JSON.parse(data) };
+      if (!merged.playlistUrl || !merged.playlistUrl.trim()) {
+        merged.playlistUrl = DEFAULT_CONFIG.playlistUrl;
+        if (!merged.playlistName || !merged.playlistName.trim()) {
+          merged.playlistName = DEFAULT_CONFIG.playlistName;
+        }
+      }
+      return merged;
     }
   } catch (err) {
     console.error('Error reading config file:', err);
@@ -294,10 +305,19 @@ app.post('/api/config', (req: Request, res: Response) => {
   const { playlistUrl, playlistName, epgUrl, autoRefreshMinutes, adminPin, customChannels, disabledChannelIds, appName, appLogo, appTagline, primaryColor, accentColor } = req.body;
   const current = readConfig();
 
+  const nextPlaylistUrl =
+    typeof playlistUrl === 'string'
+      ? playlistUrl.trim() || DEFAULT_CONFIG.playlistUrl
+      : current.playlistUrl || DEFAULT_CONFIG.playlistUrl;
+  const nextPlaylistName =
+    typeof playlistName === 'string'
+      ? playlistName.trim() || DEFAULT_CONFIG.playlistName
+      : current.playlistName || DEFAULT_CONFIG.playlistName;
+
   const updated: SiteConfig = {
     ...current,
-    playlistUrl: typeof playlistUrl === 'string' ? playlistUrl.trim() : current.playlistUrl,
-    playlistName: typeof playlistName === 'string' ? playlistName.trim() : current.playlistName,
+    playlistUrl: nextPlaylistUrl,
+    playlistName: nextPlaylistName,
     epgUrl: typeof epgUrl === 'string' ? epgUrl.trim() : current.epgUrl,
     autoRefreshMinutes: typeof autoRefreshMinutes === 'number' ? autoRefreshMinutes : current.autoRefreshMinutes,
     adminPin: typeof adminPin === 'string' && adminPin.trim() ? adminPin.trim() : current.adminPin,

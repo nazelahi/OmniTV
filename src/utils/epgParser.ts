@@ -39,18 +39,20 @@ export function parseXMLTV(content: string, channels: Channel[]): Map<string, EP
     return result;
   }
 
-  // Build lookup: tvg-id / id -> channel
+  // Build lookup: normalized tvg-id / id / tvg-name / name -> channel
   const channelById = new Map<string, Channel>();
   channels.forEach((ch) => {
-    if (ch.tvgId) channelById.set(ch.tvgId, ch);
-    channelById.set(ch.id, ch);
+    if (ch.name) channelById.set(ch.name.trim().toLowerCase(), ch);
+    if (ch.tvgName) channelById.set(ch.tvgName.trim().toLowerCase(), ch);
+    channelById.set(ch.id.trim().toLowerCase(), ch);
+    if (ch.tvgId) channelById.set(ch.tvgId.trim().toLowerCase(), ch);
   });
 
   const programmes = Array.from(doc.querySelectorAll('programme'));
   programmes.forEach((prog) => {
     const channelAttr = prog.getAttribute('channel');
     if (!channelAttr) return;
-    const channel = channelById.get(channelAttr);
+    const channel = channelById.get(channelAttr.trim().toLowerCase());
     if (!channel) return;
 
     const start = parseXmltvTime(prog.getAttribute('start'));
@@ -60,7 +62,11 @@ export function parseXMLTV(content: string, channels: Channel[]): Map<string, EP
     const title = prog.querySelector('title')?.textContent?.trim() || 'Untitled Program';
     const desc = prog.querySelector('desc')?.textContent?.trim() || '';
     const cat = prog.querySelector('category')?.textContent?.trim() || channel.group;
-    const poster = prog.querySelector('icon')?.getAttribute('src') || undefined;
+    const poster =
+      prog.querySelector('icon')?.getAttribute('src')?.trim() ||
+      prog.querySelector('poster')?.textContent?.trim() ||
+      prog.querySelector('image')?.textContent?.trim() ||
+      undefined;
 
     const now = Date.now();
     const startMs = start.getTime();

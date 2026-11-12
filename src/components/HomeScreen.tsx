@@ -1,13 +1,18 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Play,
   Tv,
   Sparkles,
   LayoutGrid,
   Grid3X3,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Radio,
 } from 'lucide-react';
 import { Channel, EPGProgram } from '../types/playlist';
 import { getCurrentAndNextProgram } from '../utils/epgGenerator';
+import { getProgramPoster, generateDynamicPosterSvg } from '../utils/posterService';
 
 interface HomeScreenProps {
   channels: Channel[];
@@ -37,6 +42,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   epgData,
 }) => {
   const [density, setDensity] = useState<'compact' | 'normal'>('compact');
+  const [nowTick, setNowTick] = useState<number>(() => Math.floor(Date.now() / 60000));
+  const shelfRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNowTick(Math.floor(Date.now() / 60000));
+    }, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const scrollShelf = (direction: 'left' | 'right') => {
+    if (shelfRef.current) {
+      const offset = direction === 'left' ? -380 : 380;
+      shelfRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    }
+  };
 
   // Favorites count
   const favoritesCount = useMemo(() => {
@@ -62,6 +83,46 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       map.set(ch.id, getCurrentAndNextProgram(ch, epgData));
     });
     return map;
+  }, [channels, epgData, nowTick]);
+
+  // Dynamically curated Featured Tonight lineup (round-robin across categories + real EPG/favorites first)
+  const featuredLineup = useMemo(() => {
+    if (channels.length === 0) return [];
+    const byGroup = new Map<string, Channel[]>();
+    const sorted = [...channels].sort((a, b) => {
+      const aHasRealProg = epgData && (epgData.get(a.id)?.length || 0) > 0 ? 1 : 0;
+      const bHasRealProg = epgData && (epgData.get(b.id)?.length || 0) > 0 ? 1 : 0;
+      if (aHasRealProg !== bHasRealProg) return bHasRealProg - aHasRealProg;
+      if (!!a.isFavorite !== !!b.isFavorite) return a.isFavorite ? -1 : 1;
+      return a.channelNumber - b.channelNumber;
+    });
+
+    sorted.forEach((ch) => {
+      const g = ch.group || 'General';
+      if (!byGroup.has(g)) byGroup.set(g, []);
+      byGroup.get(g)!.push(ch);
+    });
+
+    const queues = Array.from(byGroup.values());
+    const result: Channel[] = [];
+    const seen = new Set<string>();
+    const maxItems = Math.min(14, channels.length);
+
+    while (result.length < maxItems) {
+      let addedInRound = false;
+      for (const q of queues) {
+        if (q.length > 0 && result.length < maxItems) {
+          const ch = q.shift()!;
+          if (!seen.has(ch.id)) {
+            seen.add(ch.id);
+            result.push(ch);
+            addedInRound = true;
+          }
+        }
+      }
+      if (!addedInRound) break;
+    }
+    return result;
   }, [channels, epgData]);
 
   // Filtered channels
@@ -86,33 +147,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
       return true;
     });
-  }, [channels, selectedCategory, searchQuery]);
+  }, [channels, selectedCategory, searchQuery, programsByChannel]);
 
   return (
-    <div className="flex flex-col gap-5 select-none">
-      {/* Mobile search bar */}
-      <div className="md:hidden relative">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => onSearchChange?.(e.target.value)}
-          placeholder="Search channels..."
-          className="w-full bg-neutral-900 border border-neutral-700 rounded-full py-2 pl-4 pr-9 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500 transition-colors"
-        />
-        {searchQuery && (
-          <button
-            onClick={() => onSearchChange?.('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
-          >
-            ✕
-          </button>
-        )}
-      </div>
-
+    <div className="flex flex-col gap-4 select-none">
       {/* ─────────────────────────────────────────────────────────────
           1. YOUTUBE-STYLE TOP FILTER CHIPS BAR
       ───────────────────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-10 bg-neutral-950/95 backdrop-blur-md -mx-4 px-4 py-2 flex items-center justify-between gap-3 overflow-x-auto scrollbar-none border-b border-neutral-800/60">
+      <div className="sticky top-0 z-10 bg-[#0a0204]/85 backdrop-blur-xl -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-3 overflow-x-auto scrollbar-none border-b border-rose-950/40">
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
           {categoryChips.map((chip) => {
             const isActive = selectedCategory === chip;
@@ -140,7 +182,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         {/* Density Toggle (Compact vs Normal) */}
-        <div className="hidden sm:flex items-center gap-1 p-0.5 rounded-lg bg-black/60 border border-rose-950/40 shrink-0">
+        <div className="flex items-center gap-1 p-0.5 rounded-lg bg-black/60 border border-rose-950/40 shrink-0">
           <button
             onClick={() => setDensity('compact')}
             title="Compact Cards (More Channels on Screen)"
@@ -149,83 +191,355 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             }`}
           >
             <Grid3X3 className="w-3.5 h-3.5" />
-            <span>Compact</span>
+            <span className="hidden sm:inline">Compact</span>
           </button>
           <button
             onClick={() => setDensity('normal')}
-            title="Normal Cards"
+            title="Standard Cards"
             className={`px-2 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors ${
               density === 'normal' ? 'bg-rose-600 text-white' : 'text-neutral-400 hover:text-white'
             }`}
           >
             <LayoutGrid className="w-3.5 h-3.5" />
-            <span>Standard</span>
+            <span className="hidden sm:inline">Standard</span>
           </button>
         </div>
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          2. SLIM & CLEAN FEATURED HERO CARD (EPG SPOTLIGHT)
+          2. HIGH-STYLE FEATURED TONIGHT SHOWCASE & PROGRAM GUIDE
       ───────────────────────────────────────────────────────────── */}
       {!searchQuery && selectedCategory === 'All' && (
-        <section className="rounded-2xl border border-rose-950/40 bg-neutral-950/40 backdrop-blur-md p-3 sm:p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-              Featured Tonight
-            </h3>
-            <button
-              onClick={onGoToEPG}
-              className="text-[11px] font-semibold text-rose-400 hover:text-rose-300 transition-colors"
-            >
-              Full Guide →
-            </button>
-          </div>
-          <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none snap-x">
-            {channels.map((ch) => {
-              const current = programsByChannel.get(ch.id)?.current ?? null;
-              const upcoming = programsByChannel.get(ch.id)?.next ?? null;
-              const prog = upcoming ?? current; // show upcoming program poster/title
-              const poster = prog?.poster; // program poster only; no logo masquerading as a thumbnail
-              return (
+        <section className="relative rounded-2xl border border-rose-950/60 bg-gradient-to-b from-neutral-950/90 via-[#120306]/80 to-black/95 backdrop-blur-xl p-3.5 sm:p-5 shadow-2xl shadow-rose-950/30 overflow-hidden">
+          {/* Subtle ambient lighting */}
+          <div className="absolute -top-20 -right-20 w-80 h-80 bg-rose-600/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-rose-900/10 rounded-full blur-3xl pointer-events-none" />
+
+          {/* Section Header */}
+          <div className="relative z-1 flex items-center justify-between mb-4 pb-3 border-b border-rose-950/40">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
+              </span>
+              <h2 className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                Featured Tonight
+              </h2>
+              <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950/70 text-rose-300 border border-rose-800/40 uppercase tracking-wider">
+                Prime Time Guide
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Carousel Left / Right Scroll Buttons */}
+              <div className="hidden sm:flex items-center gap-1">
                 <button
-                  key={ch.id}
-                  onClick={() => onWatchChannel(ch)}
-                  className="shrink-0 snap-start w-64 sm:w-72 rounded-xl bg-neutral-900/60 border border-neutral-800/70 hover:border-rose-600/60 overflow-hidden transition-colors text-left flex flex-row"
+                  onClick={() => scrollShelf('left')}
+                  className="p-1.5 rounded-lg bg-neutral-900/80 hover:bg-neutral-800 border border-rose-950/40 text-neutral-300 hover:text-white transition-colors"
+                  title="Previous programs"
+                  aria-label="Scroll left"
                 >
-                  <div className="relative w-24 sm:w-28 shrink-0 aspect-video bg-neutral-950/60 flex items-center justify-center overflow-hidden">
-                    {poster ? (
-                      <img loading="lazy" decoding="async"
-                        src={poster}
-                        alt={prog?.title || ch.name}
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLElement).style.display = 'none';
-                        }}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Tv className="w-8 h-8 text-neutral-400" />
-                    )}
-                    <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/70 font-mono text-[8px] font-bold text-rose-400">
-                      CH {ch.channelNumber.toString().padStart(2, '0')}
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => scrollShelf('right')}
+                  className="p-1.5 rounded-lg bg-neutral-900/80 hover:bg-neutral-800 border border-rose-950/40 text-neutral-300 hover:text-white transition-colors"
+                  title="More programs"
+                  aria-label="Scroll right"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              <button
+                onClick={onGoToEPG}
+                className="text-xs font-semibold text-rose-400 hover:text-rose-300 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-950/30 hover:bg-rose-950/50 border border-rose-900/40 transition-colors"
+              >
+                <span>Full TV Guide</span>
+                <span className="text-[10px]">→</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Prime Time Spotlight Hero Banner */}
+          {(() => {
+            const spotlightCh = featuredChannel || channels[0];
+            if (!spotlightCh) return null;
+            const prog = programsByChannel.get(spotlightCh.id)?.current || programsByChannel.get(spotlightCh.id)?.next;
+            const poster = getProgramPoster(prog, spotlightCh, 0);
+
+            return (
+              <div className="relative mb-5 rounded-xl border border-rose-900/50 bg-black/60 overflow-hidden group shadow-lg">
+                <div className="grid grid-cols-1 md:grid-cols-12 items-stretch">
+                  {/* Poster Thumbnail Box */}
+                  <div
+                    className="md:col-span-7 relative aspect-video md:aspect-auto md:min-h-[220px] bg-neutral-950 overflow-hidden cursor-pointer"
+                    onClick={() => onWatchChannel(spotlightCh)}
+                  >
+                    <img
+                      src={poster}
+                      alt={prog?.title || spotlightCh.name}
+                      className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500 ease-out"
+                      loading="eager"
+                      onError={(e) => {
+                        const target = e.currentTarget as HTMLImageElement;
+                        target.src = generateDynamicPosterSvg(
+                          prog?.title || spotlightCh.name,
+                          spotlightCh.group,
+                          spotlightCh.name,
+                          spotlightCh.channelNumber
+                        );
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-black/90 via-black/40 to-transparent pointer-events-none" />
+
+                    {/* Live Badge & Category */}
+                    <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap">
+                      <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-bold tracking-wider uppercase flex items-center gap-1 shadow-md">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                        {prog?.isLive ? 'LIVE NOW' : 'TONIGHT'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md text-neutral-200 border border-white/10 text-[10px] font-medium font-mono">
+                        CH {spotlightCh.channelNumber.toString().padStart(2, '0')}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-rose-300 border border-rose-900/40 text-[10px] font-semibold">
+                        {spotlightCh.group}
+                      </span>
+                    </div>
+
+                    {/* Quick Play Overlay on Hover */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 backdrop-blur-[2px]">
+                      <div className="w-12 h-12 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg shadow-rose-950/80 transform scale-90 group-hover:scale-100 transition-transform">
+                        <Play className="w-5 h-5 fill-white ml-0.5" />
+                      </div>
                     </div>
                   </div>
-                  <div className="flex-1 min-w-0 p-2.5 flex flex-col gap-1 justify-center">
-                    <p className="text-xs font-bold text-white truncate leading-tight">
-                      {prog?.title || `${ch.name} — Live`}
-                    </p>
-                    <p className="text-[10px] text-neutral-400 truncate">{ch.name}</p>
-                    {prog && (
-                      <p className="text-[9px] text-neutral-500 font-mono">
-                        {new Date(prog.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -{' '}
-                        {new Date(prog.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+
+                  {/* Spotlight Info & Guide Details */}
+                  <div className="md:col-span-5 p-4 sm:p-5 flex flex-col justify-between bg-gradient-to-br from-neutral-950/95 via-[#160408]/90 to-neutral-950/95 border-t md:border-t-0 md:border-l border-rose-950/50">
+                    <div>
+                      {/* Channel Branding */}
+                      <div className="flex items-center gap-2 mb-2">
+                        {spotlightCh.logo ? (
+                          <img
+                            src={spotlightCh.logo}
+                            alt={spotlightCh.name}
+                            className="w-5 h-5 object-contain rounded bg-neutral-900/80 p-0.5 border border-white/10"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <Tv className="w-4 h-4 text-rose-500" />
+                        )}
+                        <span className="text-xs font-bold text-neutral-300 tracking-wide uppercase">
+                          {spotlightCh.name}
+                        </span>
+                      </div>
+
+                      {/* Show Title */}
+                      <h3
+                        onClick={() => onWatchChannel(spotlightCh)}
+                        className="text-base sm:text-lg font-black text-white hover:text-rose-300 transition-colors cursor-pointer leading-snug mb-2 line-clamp-2"
+                      >
+                        {prog?.title || `${spotlightCh.name} — Live`}
+                      </h3>
+
+                      {/* Show Description */}
+                      <p className="text-xs text-neutral-400 line-clamp-2 sm:line-clamp-3 mb-3 leading-relaxed">
+                        {prog?.description ||
+                          `${spotlightCh.group}${spotlightCh.country ? ` · ${spotlightCh.country}` : ''}${spotlightCh.language ? ` · ${spotlightCh.language}` : ''} — Live on CH ${spotlightCh.channelNumber.toString().padStart(2, '0')}.`}
                       </p>
-                    )}
+
+                      {/* Program Timeslot and Duration */}
+                      {prog && (
+                        <div className="flex items-center gap-2 text-[11px] text-neutral-300 font-mono mb-3">
+                          <Clock className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                          <span>
+                            {new Date(prog.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -{' '}
+                            {new Date(prog.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <span className="text-neutral-500">•</span>
+                          <span className="text-neutral-400">{prog.durationMinutes} min</span>
+                        </div>
+                      )}
+
+                      {/* Real-time Progress Bar */}
+                      {prog && prog.isLive && (
+                        <div className="mb-4">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400 font-mono mb-1">
+                            <span className="text-rose-400 font-semibold">Broadcast in Progress</span>
+                            <span>{prog.progressPercent}% Elapsed</span>
+                          </div>
+                          <div className="w-full h-1.5 rounded-full bg-neutral-900 overflow-hidden border border-rose-950/60">
+                            <div
+                              className="h-full bg-gradient-to-r from-rose-700 via-rose-500 to-amber-500 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.max(5, prog.progressPercent)}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        onClick={() => onWatchChannel(spotlightCh)}
+                        className="flex-1 px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-950/60 transition-all transform active:scale-95"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-white" />
+                        <span>Watch Live Now</span>
+                      </button>
+                      <button
+                        onClick={onGoToEPG}
+                        className="px-3.5 py-2.5 rounded-xl bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-rose-950/50 text-xs font-semibold transition-colors"
+                        title="View Full EPG Guide"
+                      >
+                        Schedule
+                      </button>
+                    </div>
                   </div>
-                </button>
-              );
-            })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Tonight's Lineup Carousel Shelf */}
+          <div>
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-xs font-bold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Radio className="w-3.5 h-3.5 text-rose-500" />
+                <span>Prime-Time Lineup & Posters</span>
+              </span>
+              <span className="text-[11px] text-neutral-500 font-mono">
+                {featuredLineup.length} Channels Featured
+              </span>
+            </div>
+
+            <div
+              ref={shelfRef}
+              className="flex gap-3 overflow-x-auto pb-2 scrollbar-none snap-x scroll-smooth"
+            >
+              {featuredLineup.map((ch, idx) => {
+                const current = programsByChannel.get(ch.id)?.current ?? null;
+                const upcoming = programsByChannel.get(ch.id)?.next ?? null;
+                const prog = current ?? upcoming;
+                const poster = getProgramPoster(prog, ch, idx);
+
+                return (
+                  <div
+                    key={ch.id}
+                    onClick={() => onWatchChannel(ch)}
+                    className="shrink-0 snap-start w-60 sm:w-64 rounded-xl bg-gradient-to-b from-neutral-900/80 via-[#150407]/70 to-neutral-950/90 border border-neutral-800/80 hover:border-rose-600/70 p-2 overflow-hidden transition-all duration-200 text-left cursor-pointer group shadow-md hover:shadow-xl hover:shadow-rose-950/30 flex flex-col"
+                  >
+                    {/* 16:9 Program Poster Image Box */}
+                    <div className="relative aspect-video rounded-lg bg-neutral-950 overflow-hidden mb-2.5 flex items-center justify-center">
+                      <img
+                        loading="lazy"
+                        decoding="async"
+                        src={poster}
+                        alt={prog?.title || ch.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ease-out"
+                        onError={(e) => {
+                          const target = e.currentTarget as HTMLImageElement;
+                          target.src = generateDynamicPosterSvg(
+                            prog?.title || ch.name,
+                            ch.group,
+                            ch.name,
+                            ch.channelNumber
+                          );
+                        }}
+                      />
+
+                      {/* Poster Shadow Gradient */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none" />
+
+                      {/* Channel Badge Pill */}
+                      <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-md font-mono text-[9px] font-bold text-rose-400 border border-white/10">
+                          CH {ch.channelNumber.toString().padStart(2, '0')}
+                        </span>
+                      </div>
+
+                      {/* Live Badge or Category */}
+                      <div className="absolute top-1.5 right-1.5">
+                        {prog?.isLive ? (
+                          <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold text-[9px] flex items-center gap-1 shadow">
+                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                            LIVE
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-md text-[9px] font-medium text-neutral-300 border border-white/10">
+                            {ch.group}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Progress bar at bottom of poster if live */}
+                      {prog?.isLive && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
+                          <div
+                            className="h-full bg-rose-600 transition-all duration-300"
+                            style={{ width: `${Math.max(5, prog.progressPercent)}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Hover Play Button */}
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px]">
+                        <div className="w-9 h-9 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
+                          <Play className="w-4 h-4 fill-white ml-0.5" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Program Metadata Details */}
+                    <div className="flex-1 flex flex-col justify-between">
+                      <div>
+                        {/* Channel title & logo */}
+                        <div className="flex items-center gap-1.5 mb-1">
+                          {ch.logo && (
+                            <img
+                              src={ch.logo}
+                              alt={ch.name}
+                              className="w-3.5 h-3.5 object-contain rounded-xs shrink-0"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          )}
+                          <span className="text-[11px] font-semibold text-neutral-400 truncate">
+                            {ch.name}
+                          </span>
+                        </div>
+
+                        {/* Program Title */}
+                        <h4 className="text-xs font-bold text-white group-hover:text-rose-300 transition-colors line-clamp-1 leading-snug">
+                          {prog?.title || `${ch.name} Broadcast`}
+                        </h4>
+                      </div>
+
+                      {/* Time slot */}
+                      <div className="mt-2 pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-neutral-400 font-mono">
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-rose-500/80" />
+                          {prog ? (
+                            <span>
+                              {new Date(prog.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          ) : (
+                            <span>{ch.group}</span>
+                          )}
+                        </span>
+                        <span className="text-neutral-500 text-[9px] group-hover:text-rose-400 transition-colors">
+                          Watch →
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </section>
       )}
@@ -252,7 +566,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             className={`grid gap-x-3 gap-y-4 ${
               density === 'compact'
                 ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6'
-                : 'grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
+                : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
             }`}
           >
             {filteredChannels.map((ch) => {
@@ -345,15 +659,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                     {/* Title and Metadata */}
                     <div className="min-w-0 flex-1">
                       {/* Program Title */}
-                      <h4 className="text-xs font-semibold text-white truncate leading-tight group-hover:text-rose-400 transition-colors">
+                      <h4 className="text-xs font-bold text-white truncate leading-tight group-hover:text-rose-400 transition-colors">
                         {prog?.title || ch.name}
                       </h4>
 
-
-
-                      {/* Category */}
-                      <div className="text-[10px] text-neutral-500 truncate">
-                        <span>{ch.group}</span>
+                      {/* Channel Name and Category (Clean unboxed metadata) */}
+                      <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 truncate mt-0.5">
+                        <span className="font-medium text-neutral-300 truncate">{ch.name}</span>
+                        <span aria-hidden="true" className="text-neutral-600">·</span>
+                        <span className="text-neutral-500 truncate">{ch.group}</span>
                       </div>
                     </div>
                   </div>
