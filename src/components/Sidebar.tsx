@@ -5,14 +5,11 @@ import {
   Layers,
   Sparkles,
   History,
-  Shield,
-  UploadCloud,
   Tv,
   Film,
   Flame,
   Globe,
   Compass,
-  Settings,
   ChevronRight,
   X,
 } from 'lucide-react';
@@ -28,8 +25,6 @@ interface SidebarProps {
   onSelectCategory: (cat: string) => void;
   groups: string[];
   favoritesCount: number;
-  onOpenPlaylistModal: () => void;
-  onOpenAdmin: () => void;
   onToggleRemote: () => void;
   isRemoteOpen: boolean;
   appName?: string;
@@ -56,8 +51,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectCategory,
   groups,
   favoritesCount,
-  onOpenPlaylistModal,
-  onOpenAdmin,
   onToggleRemote,
   isRemoteOpen,
   onClose,
@@ -166,15 +159,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <RemoteIcon className="w-5 h-5 mb-1" />
           <span className="text-[10px] tracking-tight">Remote</span>
-        </button>
-
-        <button
-          onClick={onOpenAdmin}
-          title="Admin Panel"
-          className="flex flex-col items-center justify-center w-14 py-2.5 rounded-xl text-neutral-400 hover:text-rose-400 hover:bg-neutral-900 transition-colors"
-        >
-          <Shield className="w-5 h-5 mb-1" />
-          <span className="text-[10px] tracking-tight">Admin</span>
         </button>
       </aside>
     );
@@ -342,22 +326,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <RemoteIcon className="w-4 h-4" />
           <span>Virtual TV Remote</span>
-        </button>
-
-        <button
-          onClick={() => handleMobileAction(onOpenPlaylistModal)}
-          className="w-full flex items-center gap-4 px-3 py-2 rounded-xl text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors"
-        >
-          <UploadCloud className="w-4 h-4 text-neutral-400" />
-          <span>Load Playlist</span>
-        </button>
-
-        <button
-          onClick={() => handleMobileAction(onOpenAdmin)}
-          className="w-full flex items-center gap-4 px-3 py-2 rounded-xl text-sm text-neutral-300 hover:text-rose-400 hover:bg-neutral-900 transition-colors"
-        >
-          <Shield className="w-4 h-4 text-rose-500" />
-          <span>Admin Panel</span>
         </button>
       </div>
 

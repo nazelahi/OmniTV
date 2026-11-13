@@ -9,47 +9,31 @@ import { HomeScreen } from './components/HomeScreen';
 import { WatchScreen } from './components/WatchScreen';
 import { EPGScheduleGuide } from './components/EPGScheduleGuide';
 import { VirtualRemote } from './components/VirtualRemote';
-const PlaylistModal = lazy(() => import('./components/PlaylistModal').then((m) => ({ default: m.PlaylistModal })));
 const DiagnosticsModal = lazy(() => import('./components/DiagnosticsModal').then((m) => ({ default: m.DiagnosticsModal })));
 const KeyboardShortcutsHelp = lazy(() => import('./components/KeyboardShortcutsHelp').then((m) => ({ default: m.KeyboardShortcutsHelp })));
 const AdminPanel = lazy(() => import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })));
 import { RefreshCw, Home, Radio, Layers, Menu, Tv } from 'lucide-react';
 
+const FAVORITES_STORAGE_KEY = 'omnistream_favorites';
+
 export default function App() {
-  // Load saved playlists or default
-  const [playlists, setPlaylists] = useState<Playlist[]>(() => {
-    try {
-      const saved = localStorage.getItem('omnistream_playlists');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [DEFAULT_PLAYLIST];
-  });
-
-  const [activePlaylistId, setActivePlaylistId] = useState<string>(() => {
-    try {
-      const savedId = localStorage.getItem('omnistream_active_playlist_id');
-      const savedPlaylistsRaw = localStorage.getItem('omnistream_playlists');
-      if (savedId && savedPlaylistsRaw) {
-        const parsed = JSON.parse(savedPlaylistsRaw);
-        if (Array.isArray(parsed) && parsed.some((p: any) => p && p.id === savedId)) {
-          return savedId;
+  const savedFavoriteIdsRef = useRef<Set<string>>(
+    (() => {
+      try {
+        const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return new Set<string>(parsed.filter((id) => typeof id === 'string'));
+          }
         }
-      } else if (savedId === DEFAULT_PLAYLIST.id) {
-        return savedId;
-      }
-    } catch {}
-    return DEFAULT_PLAYLIST.id;
-  });
+      } catch {}
+      return new Set<string>();
+    })()
+  );
 
-  // Current active playlist
-  const currentPlaylist = playlists.find((p) => p.id === activePlaylistId) || playlists[0] || DEFAULT_PLAYLIST;
-  const playlistsRef = useRef(playlists);
-  playlistsRef.current = playlists;
-  const activePlaylistIdRef = useRef(activePlaylistId);
-  activePlaylistIdRef.current = activePlaylistId;
+  // Authoritative site playlist managed strictly by the Admin Console
+  const [currentPlaylist, setCurrentPlaylist] = useState<Playlist>(DEFAULT_PLAYLIST);
 
   // Active channel
   const [activeChannelId, setActiveChannelId] = useState<string>(() => {
@@ -112,9 +96,20 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.location.pathname.startsWith('/admin') : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onPopState = () => {
+      setIsAdminRoute(window.location.pathname.startsWith('/admin'));
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   // Modals & Panels
-  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState<boolean>(false);
-  const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [isRemoteOpen, setIsRemoteOpen] = useState<boolean>(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState<boolean>(false);
@@ -153,18 +148,13 @@ export default function App() {
     status: 'idle',
   });
 
-  // Save to localStorage
+  // Remove any legacy user playlist overrides from localStorage so viewers always see Admin lineup
   useEffect(() => {
     try {
-      localStorage.setItem('omnistream_playlists', JSON.stringify(playlists));
+      localStorage.removeItem('omnistream_playlists');
+      localStorage.removeItem('omnistream_active_playlist_id');
     } catch {}
-  }, [playlists]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('omnistream_active_playlist_id', activePlaylistId);
-    } catch {}
-  }, [activePlaylistId]);
+  }, []);
 
   useEffect(() => {
     try {
@@ -187,13 +177,13 @@ export default function App() {
     });
   }, []);
 
-  // Fetch playlist from server and apply to state
+  // Fetch authoritative Admin-configured playlist from server and apply to state
   const reloadFromRemoteUrl = useCallback(async (cfg?: SiteConfig): Promise<boolean> => {
     setIsSiteSyncing(true);
     try {
       let currentCfg = cfg;
       if (!currentCfg) {
-        const cfgRes = await fetch('/api/config');
+        const cfgRes = await fetch('/api/config', { cache: 'no-store' });
         if (cfgRes.ok) {
           currentCfg = await cfgRes.json();
           setSiteConfig(currentCfg || null);
@@ -203,7 +193,7 @@ export default function App() {
       const effectivePlaylistUrl = currentCfg?.playlistUrl?.trim() || DEFAULT_PLAYLIST_URL;
       const effectivePlaylistName = currentCfg?.playlistName?.trim() || DEFAULT_PLAYLIST.name;
 
-      const playlistRes = await fetch(`/api/fetch-playlist?url=${encodeURIComponent(effectivePlaylistUrl)}`);
+      const playlistRes = await fetch('/api/fetch-playlist', { cache: 'no-store' });
       if (!playlistRes.ok) {
         throw new Error(`Server returned HTTP ${playlistRes.status}`);
       }
@@ -230,19 +220,13 @@ export default function App() {
       combinedChannels.forEach((c) => groupsSet.add(c.group));
       const groups = Array.from(groupsSet).sort();
 
-      // Switch to the server playlist on first run (curated default placeholder) or if
-      // the saved selection no longer exists. A user-selected imported playlist is kept.
-      const currentActiveId = activePlaylistIdRef.current;
-      const currentExists = playlistsRef.current.some((p) => p.id === currentActiveId);
-      const shouldActivate = !currentExists || currentActiveId === DEFAULT_PLAYLIST.id;
+      setCurrentPlaylist((prev) => {
+        const favoriteIds = new Set([
+          ...prev.channels.filter((c) => c.isFavorite).map((c) => c.id),
+          ...Array.from(savedFavoriteIdsRef.current),
+        ]);
 
-      setPlaylists((prev) => {
-        const existing = prev.find((p) => p.id === 'global-server-playlist');
-        const favoriteIds = new Set(
-          (existing?.channels || []).filter((c) => c.isFavorite).map((c) => c.id)
-        );
-
-        const globalPlaylist: Playlist = {
+        return {
           id: 'global-server-playlist',
           name: effectivePlaylistName,
           url: effectivePlaylistUrl,
@@ -254,19 +238,12 @@ export default function App() {
           updatedAt: new Date().toISOString(),
           isCustom: false,
         };
-
-        const filtered = prev.filter((p) => p.id !== 'global-server-playlist');
-        return [globalPlaylist, ...filtered];
       });
 
-      if (shouldActivate) {
-        setActivePlaylistId('global-server-playlist');
-
-        if (combinedChannels.length > 0) {
-          const exists = combinedChannels.some((c) => c.id === activeChannelIdRef.current);
-          if (!exists) {
-            handleSelectChannel(combinedChannels[0]);
-          }
+      if (combinedChannels.length > 0) {
+        const exists = combinedChannels.some((c) => c.id === activeChannelIdRef.current);
+        if (!exists) {
+          handleSelectChannel(combinedChannels[0]);
         }
       }
       return true;
@@ -278,9 +255,9 @@ export default function App() {
     }
   }, [handleSelectChannel]);
 
-  // Initial load: check server config, falling back to DEFAULT_PLAYLIST_URL when unconfigured
+  // Initial load & optional periodic sync with Admin configuration
   useEffect(() => {
-    fetch('/api/config')
+    fetch('/api/config', { cache: 'no-store' })
       .then((res) => res.json())
       .then((cfg: SiteConfig) => {
         setSiteConfig(cfg || null);
@@ -298,6 +275,15 @@ export default function App() {
         });
       });
   }, [reloadFromRemoteUrl]);
+
+  useEffect(() => {
+    const minutes = siteConfig?.autoRefreshMinutes ?? 0;
+    if (!minutes || minutes <= 0) return;
+    const interval = setInterval(() => {
+      reloadFromRemoteUrl();
+    }, minutes * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [siteConfig?.autoRefreshMinutes, reloadFromRemoteUrl]);
 
   // Next / Prev Channel
   const handleNextChannel = useCallback(() => {
@@ -327,50 +313,28 @@ export default function App() {
     }
   }, [currentPlaylist.channels, handleSelectChannel]);
 
-  // Toggle favorite
+  // Toggle favorite (stored locally in visitor's browser without requiring login)
   const handleToggleFavorite = useCallback((channelId: string) => {
-    setPlaylists((prev) =>
-      prev.map((pl) => {
-        if (pl.id !== activePlaylistId) return pl;
-        return {
-          ...pl,
-          channels: pl.channels.map((ch) =>
-            ch.id === channelId ? { ...ch, isFavorite: !ch.isFavorite } : ch
-          ),
-        };
-      })
-    );
-  }, [activePlaylistId]);
-
-  // Load new local playlist
-  const handleLoadPlaylist = (newPlaylist: Playlist) => {
-    setPlaylists((prev) => {
-      const existingIdx = prev.findIndex((p) => p.id === newPlaylist.id);
-      if (existingIdx !== -1) {
-        const copy = [...prev];
-        copy[existingIdx] = newPlaylist;
-        return copy;
-      }
-      return [newPlaylist, ...prev];
-    });
-
-    setActivePlaylistId(newPlaylist.id);
-    if (newPlaylist.channels.length > 0) {
-      handleSelectChannel(newPlaylist.channels[0]);
-    }
-  };
-
-  // Delete playlist
-  const handleDeletePlaylist = (id: string) => {
-    if (id === DEFAULT_PLAYLIST.id || id === 'global-server-playlist') return;
-    setPlaylists((prev) => prev.filter((p) => p.id !== id));
-    if (activePlaylistId === id) {
-      setActivePlaylistId(DEFAULT_PLAYLIST.id);
-      if (DEFAULT_PLAYLIST.channels.length > 0) {
-        handleSelectChannel(DEFAULT_PLAYLIST.channels[0]);
-      }
-    }
-  };
+    setCurrentPlaylist((prev) => ({
+      ...prev,
+      channels: prev.channels.map((ch) => {
+        if (ch.id !== channelId) return ch;
+        const toggledNext = !ch.isFavorite;
+        if (toggledNext) {
+          savedFavoriteIdsRef.current.add(channelId);
+        } else {
+          savedFavoriteIdsRef.current.delete(channelId);
+        }
+        try {
+          localStorage.setItem(
+            FAVORITES_STORAGE_KEY,
+            JSON.stringify(Array.from(savedFavoriteIdsRef.current))
+          );
+        } catch {}
+        return { ...ch, isFavorite: toggledNext };
+      }),
+    }));
+  }, []);
 
   // Physical Keyboard Shortcuts
   const numberBufferRef = useRef<string>('');
@@ -426,8 +390,6 @@ export default function App() {
           setIsDiagnosticsOpen((d) => !d);
           break;
         case 'Escape':
-          setIsPlaylistModalOpen(false);
-          setIsAdminOpen(false);
           setIsDiagnosticsOpen(false);
           setIsShortcutsOpen(false);
           break;
@@ -495,6 +457,26 @@ export default function App() {
     return currentPlaylist.channels.filter((c) => c.isFavorite).length;
   }, [currentPlaylist.channels]);
 
+  if (isAdminRoute) {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-[#070102]" />}>
+        <AdminPanel
+          mode="page"
+          isOpen={true}
+          onClose={() => {
+            window.history.pushState({}, '', '/');
+            setIsAdminRoute(false);
+          }}
+          onConfigSaved={(updatedCfg) => {
+            setSiteConfig(updatedCfg);
+          }}
+          onForceReloadChannels={() => reloadFromRemoteUrl()}
+          channels={currentPlaylist.channels}
+        />
+      </Suspense>
+    );
+  }
+
   return (
     <div className="h-screen bg-[radial-gradient(ellipse_120%_80%_at_50%_-15%,rgba(225,29,72,0.22),rgba(80,7,20,0.12)_45%,rgba(7,2,3,0.98)_85%)] bg-[#070102] text-neutral-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white overflow-hidden relative">
       {/* Red & Black Ambient Glow Cones */}
@@ -519,8 +501,6 @@ export default function App() {
           setCurrentView('player');
         }}
         onSelectCategory={setSelectedCategory}
-        onOpenPlaylistModal={() => setIsPlaylistModalOpen(true)}
-        onOpenAdmin={() => setIsAdminOpen(true)}
         onToggleRemote={() => setIsRemoteOpen((prev) => !prev)}
         isRemoteOpen={isRemoteOpen}
         onOpenShortcuts={() => setIsShortcutsOpen(true)}
@@ -549,8 +529,6 @@ export default function App() {
           onSelectCategory={setSelectedCategory}
           groups={currentPlaylist.groups}
           favoritesCount={favoritesCount}
-          onOpenPlaylistModal={() => setIsPlaylistModalOpen(true)}
-          onOpenAdmin={() => setIsAdminOpen(true)}
           onToggleRemote={() => setIsRemoteOpen((prev) => !prev)}
           isRemoteOpen={isRemoteOpen}
           onClose={() => setIsSidebarCollapsed(true)}
@@ -609,7 +587,6 @@ export default function App() {
                   onToggleFavorite={handleToggleFavorite}
                   epgUrl={siteConfig?.epgUrl || currentPlaylist.epgUrl}
                   epgData={epgData}
-                  onOpenAdmin={() => setIsAdminOpen(true)}
                 />
               </div>
             )}
@@ -692,28 +669,6 @@ export default function App() {
 
       {/* Lazy-loaded modals */}
       <Suspense fallback={null}>
-        {/* Admin Panel Modal */}
-        <AdminPanel
-          isOpen={isAdminOpen}
-          onClose={() => setIsAdminOpen(false)}
-          onConfigSaved={(updatedCfg) => {
-            setSiteConfig(updatedCfg);
-          }}
-          onForceReloadChannels={() => reloadFromRemoteUrl()}
-          channels={currentPlaylist.channels}
-        />
-
-        {/* Playlist Import / Management Modal */}
-        <PlaylistModal
-          isOpen={isPlaylistModalOpen}
-          onClose={() => setIsPlaylistModalOpen(false)}
-          onLoadPlaylist={handleLoadPlaylist}
-          savedPlaylists={playlists}
-          activePlaylistId={activePlaylistId}
-          onDeletePlaylist={handleDeletePlaylist}
-          currentPlaylist={currentPlaylist}
-        />
-
         {/* Stream Technical Diagnostics Modal */}
         <DiagnosticsModal
           isOpen={isDiagnosticsOpen}

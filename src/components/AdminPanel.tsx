@@ -18,9 +18,12 @@ import {
   X,
   Loader2,
   Tv,
+  ArrowLeft,
+  LogIn,
 } from 'lucide-react';
 import { Channel, SiteConfig } from '../types/playlist';
 import { SAMPLE_PLAYLIST_PRESETS, DEFAULT_PLAYLIST_URL } from '../utils/defaultChannels';
+import { useAuth, AuthProvider } from '../contexts/AuthContext';
 
 interface AdminPanelProps {
   isOpen: boolean;
@@ -28,6 +31,7 @@ interface AdminPanelProps {
   onConfigSaved: (config: SiteConfig) => void;
   onForceReloadChannels: () => Promise<boolean | void>;
   channels: Channel[];
+  mode?: 'modal' | 'page';
 }
 
 interface TestResult {
@@ -42,13 +46,16 @@ interface TestResult {
   error?: string;
 }
 
-export const AdminPanel: React.FC<AdminPanelProps> = ({
+const AdminPanelInner: React.FC<AdminPanelProps> = ({
   isOpen,
   onClose,
   onConfigSaved,
   onForceReloadChannels,
   channels,
+  mode = 'modal',
 }) => {
+  const { user, signInWithGoogle, getIdToken } = useAuth();
+
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return (
@@ -59,6 +66,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [isVerifyingPin, setIsVerifyingPin] = useState<boolean>(false);
+  const [isGoogleAuthenticating, setIsGoogleAuthenticating] = useState<boolean>(false);
 
   // Tab state
   const [activeTab, setActiveTab] = useState<'playlist' | 'channels' | 'settings' | 'branding'>('playlist');
@@ -95,12 +103,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [primaryColor, setPrimaryColor] = useState<string>('#e11d48');
   const [accentColor, setAccentColor] = useState<string>('');
 
-  // Fetch current server config on open
+  // Auto-exchange authorized Google Sign-In session for Admin token if user is already signed in
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isAuthenticated || !user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const idToken = await getIdToken();
+        if (!idToken || cancelled) return;
+        const res = await fetch('/api/admin/google-login', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${idToken}` },
+          cache: 'no-store',
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (data?.success && data.token && !cancelled) {
+          sessionStorage.setItem('omnistream_admin_auth', 'true');
+          sessionStorage.setItem('omnistream_admin_token', data.token);
+          setIsAuthenticated(true);
+          setPinError(null);
+        }
+      } catch {
+        // Non-blocking fallback to manual Google sign-in button or PIN
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, isAuthenticated, user, getIdToken]);
 
-    fetch('/api/config', { cache: 'no-store', credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.json() : null))
+  // Fetch full admin server config once authenticated
+  useEffect(() => {
+    if (!isOpen || !isAuthenticated) return;
+    const token = sessionStorage.getItem('omnistream_admin_token');
+    if (!token) return;
+
+    fetch('/api/admin/config', {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        if (res.status === 401) {
+          sessionStorage.removeItem('omnistream_admin_auth');
+          sessionStorage.removeItem('omnistream_admin_token');
+          setIsAuthenticated(false);
+          return null;
+        }
+        return res.ok ? res.json() : null;
+      })
       .then((data: SiteConfig | null) => {
         if (data) {
           setPlaylistUrl(data.playlistUrl || '');
@@ -117,11 +169,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         }
       })
       .catch((err) => {
-        console.error('Failed to load server config:', err);
+        console.error('Failed to load admin config:', err);
       });
-  }, [isOpen]);
+  }, [isOpen, isAuthenticated]);
 
   if (!isOpen) return null;
+
+  const handleGoogleAdminLogin = async () => {
+    setIsGoogleAuthenticating(true);
+    setPinError(null);
+    try {
+      const signedInUser = user || (await signInWithGoogle());
+      if (!signedInUser) {
+        setPinError('Google sign-in was cancelled.');
+        return;
+      }
+      const idToken = await signedInUser.getIdToken();
+      const res = await fetch('/api/admin/google-login', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && data.token) {
+        sessionStorage.setItem('omnistream_admin_auth', 'true');
+        sessionStorage.setItem('omnistream_admin_token', data.token);
+        setIsAuthenticated(true);
+        setPinError(null);
+      } else {
+        setPinError(data?.error || 'This Google account is not authorized for admin access.');
+      }
+    } catch (err: any) {
+      setPinError(err?.message || 'Unable to sign in with Google.');
+    } finally {
+      setIsGoogleAuthenticating(false);
+    }
+  };
 
   // PIN Verification with transient retry & safe response parsing
   const handleVerifyPin = async (e: React.FormEvent) => {
@@ -378,10 +461,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const containerClass =
+    mode === 'page'
+      ? 'min-h-screen bg-[#070102] text-neutral-100 flex items-center justify-center p-3 sm:p-6'
+      : 'fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-200';
+
+  const cardClass =
+    mode === 'page'
+      ? 'bg-neutral-900 border border-neutral-800 rounded-2xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col min-h-[82vh] max-h-[92vh]'
+      : 'bg-neutral-900 border border-neutral-700/80 rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[92vh]';
+
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-neutral-900 border border-neutral-700/80 rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Modal Top Bar */}
+    <div role={mode === 'page' ? 'main' : 'dialog'} aria-modal={mode === 'modal' ? true : undefined} className={containerClass}>
+      <div className={cardClass}>
+        {/* Top Bar */}
         <div className="p-4 sm:p-5 border-b border-neutral-800 flex items-center justify-between bg-neutral-950/40">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-rose-600/20 border border-rose-500/30 flex items-center justify-center text-rose-500">
@@ -389,9 +482,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">Website Admin Panel</h3>
+                <h3 className="text-base font-bold text-white">Website Admin Console</h3>
                 <span className="px-1.5 py-0.2 bg-neutral-800 border border-neutral-700 rounded text-[10px] font-mono font-semibold text-neutral-300">
-                  v2.0
+                  Private
                 </span>
               </div>
               <p className="text-xs text-neutral-400">
@@ -401,13 +494,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white rounded-lg bg-neutral-800/80 hover:bg-neutral-800 transition-colors"
           >
-            <X className="w-5 h-5" />
+            {mode === 'page' ? (
+              <>
+                <ArrowLeft className="w-4 h-4" />
+                <span>Public Site</span>
+              </>
+            ) : (
+              <X className="w-5 h-5" />
+            )}
           </button>
         </div>
 
-        {/* PIN Authentication Gate */}
+        {/* Authentication Gate */}
         {!isAuthenticated ? (
           <div className="p-8 flex flex-col items-center justify-center text-center my-auto">
             <div className="w-14 h-14 rounded-2xl bg-neutral-800 border border-neutral-700 flex items-center justify-center text-neutral-300 mb-4 shadow-lg">
@@ -415,42 +515,69 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
             <h4 className="text-lg font-bold text-white mb-1">Admin Authentication</h4>
             <p className="text-xs text-neutral-400 max-w-sm mb-6">
-              Enter the admin passcode to modify global website playlist settings and channel configurations.
+              Sign in with an authorized admin Google account or enter the admin passcode to manage website settings.
             </p>
 
-            <form onSubmit={handleVerifyPin} className="w-full max-w-xs space-y-3">
-              <input
-                type="password"
-                value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                placeholder="Enter 4-digit PIN..."
-                maxLength={8}
-                autoFocus
-                className="w-full text-center tracking-widest font-mono text-base px-4 py-2.5 bg-neutral-950 border border-neutral-700 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500"
-              />
-
-              {pinError && (
-                <div className="text-xs text-rose-400 flex items-center justify-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span>{pinError}</span>
-                </div>
-              )}
-
+            <div className="w-full max-w-xs space-y-4">
               <button
-                type="submit"
-                disabled={isVerifyingPin}
-                className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm shadow-rose-900/30 flex items-center justify-center gap-2"
+                type="button"
+                disabled={isGoogleAuthenticating}
+                onClick={handleGoogleAdminLogin}
+                className="w-full py-2.5 bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-white font-semibold text-xs rounded-xl transition-colors flex items-center justify-center gap-2"
               >
-                {isVerifyingPin ? (
+                {isGoogleAuthenticating ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Verifying PIN...</span>
+                    <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
+                    <span>Verifying Google Account...</span>
                   </>
                 ) : (
-                  <span>Unlock Admin Panel</span>
+                  <>
+                    <LogIn className="w-4 h-4 text-rose-500" />
+                    <span>{user ? `Continue as ${user.email}` : 'Sign in with Google'}</span>
+                  </>
                 )}
               </button>
-            </form>
+
+              <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider text-neutral-500">
+                <div className="h-px flex-1 bg-neutral-800" />
+                <span>or enter passcode</span>
+                <div className="h-px flex-1 bg-neutral-800" />
+              </div>
+
+              <form onSubmit={handleVerifyPin} className="space-y-3">
+                <input
+                  type="password"
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  placeholder="Enter admin PIN..."
+                  maxLength={8}
+                  autoFocus
+                  className="w-full text-center tracking-widest font-mono text-base px-4 py-2.5 bg-neutral-950 border border-neutral-700 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-rose-500"
+                />
+
+                {pinError && (
+                  <div className="text-xs text-rose-400 flex items-center justify-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{pinError}</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isVerifyingPin}
+                  className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-bold text-xs rounded-xl transition-colors shadow-sm shadow-rose-900/30 flex items-center justify-center gap-2"
+                >
+                  {isVerifyingPin ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Verifying PIN...</span>
+                    </>
+                  ) : (
+                    <span>Unlock Admin Console</span>
+                  )}
+                </button>
+              </form>
+            </div>
           </div>
         ) : (
           /* Authenticated Admin Workspace */
@@ -1130,3 +1257,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     </div>
   );
 };
+
+export const AdminPanel: React.FC<AdminPanelProps> = (props) => (
+  <AuthProvider>
+    <AdminPanelInner {...props} />
+  </AuthProvider>
+);

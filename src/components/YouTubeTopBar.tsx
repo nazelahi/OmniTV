@@ -3,8 +3,6 @@ import {
   Menu,
   Search,
   X,
-  UploadCloud,
-  Shield,
   HelpCircle,
   Clock,
   Play,
@@ -26,8 +24,6 @@ interface YouTubeTopBarProps {
   onSearchChange: (query: string) => void;
   appName?: string;
   appLogo?: string;
-  onOpenPlaylistModal: () => void;
-  onOpenAdmin: () => void;
   onToggleRemote: () => void;
   isRemoteOpen: boolean;
   onOpenShortcuts: () => void;
@@ -55,8 +51,6 @@ export const YouTubeTopBar: React.FC<YouTubeTopBarProps> = ({
   onToggleSidebar,
   searchQuery,
   onSearchChange,
-  onOpenPlaylistModal,
-  onOpenAdmin,
   onToggleRemote,
   isRemoteOpen,
   onOpenShortcuts,
@@ -638,24 +632,6 @@ export const YouTubeTopBar: React.FC<YouTubeTopBarProps> = ({
               }`}
             >
               <RemoteIcon className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={onOpenPlaylistModal}
-              title="Load Playlist URL or File"
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-800 rounded-full transition-colors"
-            >
-              <UploadCloud className="w-3.5 h-3.5 text-rose-500" />
-              <span className="hidden md:inline">Playlist</span>
-            </button>
-
-            <button
-              onClick={onOpenAdmin}
-              title="Admin Panel"
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-800 rounded-full transition-colors"
-            >
-              <Shield className="w-3.5 h-3.5 text-rose-500" />
-              <span className="hidden md:inline">Admin</span>
             </button>
 
             <button

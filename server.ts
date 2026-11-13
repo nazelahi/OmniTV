@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import type { Request, Response } from 'express';
 import path from 'path';
@@ -6,6 +7,18 @@ import dns from 'dns/promises';
 import { gunzip } from 'zlib';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import { requireAuth, optionalAuth, type AuthRequest } from './src/middleware/auth.ts';
+import {
+  getSiteConfigFromDb,
+  saveSiteConfigToDb,
+  persistSyncStatusInDb,
+  createAdminSessionInDb,
+  validateAdminSessionInDb,
+  getUserDataFromDb,
+  toggleUserFavoriteInDb,
+  saveUserRecentsInDb,
+  type StoredSiteConfig,
+} from './src/db/store.ts';
 
 const gunzipAsync = promisify(gunzip);
 
@@ -105,25 +118,36 @@ async function safeFetch(url: string, init?: RequestInit, maxRedirects = 5): Pro
 }
 
 
-// In-memory admin session tokens (token -> expiry ms). Cleared on server restart.
+// Admin session tokens (backed by PostgreSQL admin_sessions table + short memory cache)
 const adminTokens = new Map<string, number>();
 const ADMIN_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
-function issueAdminToken(): string {
+async function issueAdminToken(userUid?: string | null): Promise<string> {
   const token = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  adminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL_MS);
+  const expiresMs = Date.now() + ADMIN_TOKEN_TTL_MS;
+  adminTokens.set(token, expiresMs);
+  try {
+    await createAdminSessionInDb(token, new Date(expiresMs), userUid);
+  } catch (err) {
+    console.error('Failed to persist admin session:', err);
+  }
   return token;
 }
 
-function isAdminTokenValid(token: string | undefined | null): boolean {
+async function isAdminTokenValid(token: string | undefined | null): Promise<boolean> {
   if (!token) return false;
   const expiry = adminTokens.get(token);
-  if (!expiry) return false;
-  if (Date.now() > expiry) {
-    adminTokens.delete(token);
-    return false;
+  if (expiry && Date.now() <= expiry) {
+    return true;
   }
-  return true;
+  if (expiry) {
+    adminTokens.delete(token);
+  }
+  const validInDb = await validateAdminSessionInDb(token);
+  if (validInDb) {
+    adminTokens.set(token, Date.now() + 60 * 60 * 1000);
+  }
+  return validInDb;
 }
 
 // Simple in-memory throttling for PIN attempts (per IP)
@@ -164,33 +188,33 @@ function extractAdminToken(req: any): string | null {
   }
   return null;
 }
+
+const AUTHORIZED_ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS || 'najalahi9@gmail.com')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function isAuthorizedAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return AUTHORIZED_ADMIN_EMAILS.has(email.trim().toLowerCase());
+}
+
+async function isAdminRequestAuthorized(req: AuthRequest): Promise<boolean> {
+  if (
+    req.user?.email &&
+    req.user.email_verified !== false &&
+    isAuthorizedAdminEmail(req.user.email)
+  ) {
+    return true;
+  }
+  return await isAdminTokenValid(extractAdminToken(req));
+}
 const DATA_DIR = path.resolve(__dirname, 'data');
-const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const LEGACY_CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-interface SiteConfig {
-  playlistUrl: string;
-  playlistName: string;
-  epgUrl?: string;
-  autoRefreshMinutes: number;
-  adminPin: string;
-  customChannels: any[];
-  disabledChannelIds: string[];
-  lastUpdated: string;
-  lastSyncStatus?: 'ok' | 'error';
-  lastSyncMessage?: string;
-  cachedChannelCount?: number;
-  // Branding / customization
-  appName?: string;
-  appLogo?: string;
-  appTagline?: string;
-  primaryColor?: string;
-  accentColor?: string;
-}
+type SiteConfig = StoredSiteConfig;
 
 const FALLBACK_DEFAULT_PLAYLIST_URL =
   'https://raw.githubusercontent.com/saeidrahmanbd/BDIX-IPTV/main/IPTV-Playlist.m3u';
@@ -211,53 +235,53 @@ const DEFAULT_CONFIG: SiteConfig = {
   cachedChannelCount: 0,
 };
 
-function readConfig(): SiteConfig {
+let legacySeedAttempted = false;
+
+function readLegacyFileSeed(): Partial<SiteConfig> | null {
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const data = fs.readFileSync(CONFIG_FILE, 'utf-8');
-      const merged: SiteConfig = { ...DEFAULT_CONFIG, ...JSON.parse(data) };
-      if (!merged.playlistUrl || !merged.playlistUrl.trim()) {
-        merged.playlistUrl = DEFAULT_CONFIG.playlistUrl;
-        if (!merged.playlistName || !merged.playlistName.trim()) {
-          merged.playlistName = DEFAULT_CONFIG.playlistName;
-        }
-      }
-      return merged;
+    if (fs.existsSync(LEGACY_CONFIG_FILE)) {
+      return JSON.parse(fs.readFileSync(LEGACY_CONFIG_FILE, 'utf-8'));
     }
-  } catch (err) {
-    console.error('Error reading config file:', err);
-  }
-  return { ...DEFAULT_CONFIG };
+  } catch {}
+  return null;
 }
 
-function writeConfig(config: SiteConfig): boolean {
+async function readConfig(): Promise<SiteConfig> {
   try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmpFile = `${CONFIG_FILE}.tmp`;
-    fs.writeFileSync(tmpFile, JSON.stringify(config, null, 2), 'utf-8');
-    // Atomic replace so a crash mid-write cannot corrupt the config
-    fs.renameSync(tmpFile, CONFIG_FILE);
-    return true;
+    const dbConfig = await getSiteConfigFromDb(DEFAULT_CONFIG);
+    if (!legacySeedAttempted) {
+      legacySeedAttempted = true;
+      // If site_settings has not been populated yet, migrate legacy local file once if present
+      const legacy = readLegacyFileSeed();
+      if (legacy && dbConfig.lastUpdated === DEFAULT_CONFIG.lastUpdated) {
+        const merged: SiteConfig = {
+          ...DEFAULT_CONFIG,
+          ...legacy,
+          playlistUrl: legacy.playlistUrl?.trim() || DEFAULT_CONFIG.playlistUrl,
+          playlistName: legacy.playlistName?.trim() || DEFAULT_CONFIG.playlistName,
+        };
+        return await saveSiteConfigToDb(merged);
+      }
+    }
+    return dbConfig;
   } catch (err) {
-    console.error('Error writing config file:', err);
-    return false;
+    console.error('Falling back to default config due to read error:', err);
+    return { ...DEFAULT_CONFIG };
   }
+}
+
+async function writeConfig(config: SiteConfig, updatedByUid?: string | null): Promise<SiteConfig> {
+  return await saveSiteConfigToDb(config, updatedByUid);
 }
 
 /** Persist sync status without clobbering a config save that happened meanwhile. */
-function persistSyncStatus(
+async function persistSyncStatus(
   expectedUrl: string,
   status: 'ok' | 'error',
   message: string,
   channelCount?: number
-): void {
-  const latest = readConfig();
-  // Only record status for the playlist that is still configured
-  if (expectedUrl !== latest.playlistUrl) return;
-  latest.lastSyncStatus = status;
-  latest.lastSyncMessage = message;
-  if (typeof channelCount === 'number') latest.cachedChannelCount = channelCount;
-  writeConfig(latest);
+): Promise<void> {
+  await persistSyncStatusInDb(DEFAULT_CONFIG, expectedUrl, status, message, channelCount);
 }
 
 app.set('trust proxy', 1);
@@ -268,19 +292,58 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// API: Get current website configuration
-app.get('/api/config', (req: Request, res: Response) => {
-  const config = readConfig();
-  // Don't leak the raw PIN in plain GET
-  const { adminPin, ...safeConfig } = config;
-  res.json({
-    ...safeConfig,
-    hasPin: !!adminPin,
-  });
+// API: Get public website configuration (no admin metadata exposed)
+app.get('/api/config', async (_req: Request, res: Response) => {
+  try {
+    const config = await readConfig();
+    const {
+      adminPin: _pin,
+      lastSyncStatus: _syncStatus,
+      lastSyncMessage: _syncMessage,
+      cachedChannelCount: _cachedCount,
+      ...publicConfig
+    } = config;
+    res.json(publicConfig);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to load configuration' });
+  }
+});
+
+// API: Get full configuration for authenticated Admin Console
+app.get('/api/admin/config', optionalAuth, async (req: AuthRequest, res: Response) => {
+  if (!(await isAdminRequestAuthorized(req))) {
+    return res.status(401).json({ success: false, error: 'Admin authentication required' });
+  }
+  try {
+    const config = await readConfig();
+    const { adminPin, ...safeConfig } = config;
+    res.json({
+      ...safeConfig,
+      hasPin: !!adminPin,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to load configuration' });
+  }
+});
+
+// API: Exchange authorized Google Sign-In Firebase ID token for an Admin session
+app.post('/api/admin/google-login', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (req.user?.email_verified === false || !isAuthorizedAdminEmail(req.user?.email)) {
+    return res.status(403).json({
+      success: false,
+      error: 'This Google account is not authorized for admin access.',
+    });
+  }
+  try {
+    const token = await issueAdminToken(req.user!.uid);
+    return res.json({ success: true, token });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message || 'Failed to create admin session' });
+  }
 });
 
 // API: Verify Admin PIN
-app.post('/api/verify-pin', (req: Request, res: Response) => {
+app.post('/api/verify-pin', optionalAuth, async (req: AuthRequest, res: Response) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   if (isPinRateLimited(ip)) {
     return res.status(429).json({
@@ -289,71 +352,154 @@ app.post('/api/verify-pin', (req: Request, res: Response) => {
     });
   }
 
-  const rawPin = req.body && typeof req.body === 'object' ? req.body.pin : undefined;
-  const submittedPin = typeof rawPin === 'string' || typeof rawPin === 'number' ? String(rawPin).trim() : '';
-  const config = readConfig();
-  const expectedPin = typeof config.adminPin === 'string' ? config.adminPin.trim() : '';
+  try {
+    const rawPin = req.body && typeof req.body === 'object' ? req.body.pin : undefined;
+    const submittedPin =
+      typeof rawPin === 'string' || typeof rawPin === 'number' ? String(rawPin).trim() : '';
+    const config = await readConfig();
+    const expectedPin = typeof config.adminPin === 'string' ? config.adminPin.trim() : '';
 
-  if (!expectedPin || expectedPin === submittedPin) {
-    pinAttempts.delete(ip);
-    const token = issueAdminToken();
-    return res.json({ success: true, token });
+    if (!expectedPin || expectedPin === submittedPin) {
+      pinAttempts.delete(ip);
+      const token = await issueAdminToken(req.user?.uid ?? null);
+      return res.json({ success: true, token });
+    }
+    recordPinFailure(ip);
+    return res.status(401).json({ success: false, error: 'Incorrect Admin PIN' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message || 'Failed to verify PIN' });
   }
-  recordPinFailure(ip);
-  return res.status(401).json({ success: false, error: 'Incorrect Admin PIN' });
 });
 
 // API: Update website configuration
-app.post('/api/config', (req: Request, res: Response) => {
-  if (!isAdminTokenValid(extractAdminToken(req))) {
+app.post('/api/config', optionalAuth, async (req: AuthRequest, res: Response) => {
+  if (!(await isAdminRequestAuthorized(req))) {
     return res.status(401).json({ success: false, error: 'Admin authentication required' });
   }
-  // Strip any auth token from persisted body
   if (req.body && typeof req.body === 'object') {
     delete req.body._adminToken;
   }
-  const { playlistUrl, playlistName, epgUrl, autoRefreshMinutes, adminPin, customChannels, disabledChannelIds, appName, appLogo, appTagline, primaryColor, accentColor } = (req.body && typeof req.body === 'object' ? req.body : {});
-  const current = readConfig();
+  const {
+    playlistUrl,
+    playlistName,
+    epgUrl,
+    autoRefreshMinutes,
+    adminPin,
+    customChannels,
+    disabledChannelIds,
+    appName,
+    appLogo,
+    appTagline,
+    primaryColor,
+    accentColor,
+  } = req.body && typeof req.body === 'object' ? req.body : {};
 
-  const nextPlaylistUrl =
-    typeof playlistUrl === 'string'
-      ? playlistUrl.trim() || DEFAULT_CONFIG.playlistUrl
-      : current.playlistUrl || DEFAULT_CONFIG.playlistUrl;
-  const nextPlaylistName =
-    typeof playlistName === 'string'
-      ? playlistName.trim() || DEFAULT_CONFIG.playlistName
-      : current.playlistName || DEFAULT_CONFIG.playlistName;
+  try {
+    const current = await readConfig();
 
-  const updated: SiteConfig = {
-    ...current,
-    playlistUrl: nextPlaylistUrl,
-    playlistName: nextPlaylistName,
-    epgUrl: typeof epgUrl === 'string' ? epgUrl.trim() : current.epgUrl,
-    autoRefreshMinutes: typeof autoRefreshMinutes === 'number' ? autoRefreshMinutes : current.autoRefreshMinutes,
-    adminPin: typeof adminPin === 'string' && adminPin.trim() ? adminPin.trim() : current.adminPin,
-    customChannels: Array.isArray(customChannels) ? customChannels : current.customChannels,
-    disabledChannelIds: Array.isArray(disabledChannelIds) ? disabledChannelIds : current.disabledChannelIds,
-    appName: typeof appName === 'string' ? appName.trim() : current.appName,
-    appLogo: typeof appLogo === 'string' ? appLogo.trim() : current.appLogo,
-    appTagline: typeof appTagline === 'string' ? appTagline.trim() : current.appTagline,
-    primaryColor: typeof primaryColor === 'string' ? primaryColor.trim() : current.primaryColor,
-    accentColor: typeof accentColor === 'string' ? accentColor.trim() : current.accentColor,
-    lastUpdated: new Date().toISOString(),
-  };
+    const nextPlaylistUrl =
+      typeof playlistUrl === 'string'
+        ? playlistUrl.trim() || DEFAULT_CONFIG.playlistUrl
+        : current.playlistUrl || DEFAULT_CONFIG.playlistUrl;
+    const nextPlaylistName =
+      typeof playlistName === 'string'
+        ? playlistName.trim() || DEFAULT_CONFIG.playlistName
+        : current.playlistName || DEFAULT_CONFIG.playlistName;
 
-  const success = writeConfig(updated);
-  if (success) {
-    const { adminPin, ...safeUpdated } = updated;
-    res.json({ success: true, config: { ...safeUpdated, hasPin: !!adminPin } });
-  } else {
-    res.status(500).json({ success: false, error: 'Failed to write configuration file' });
+    const updated: SiteConfig = {
+      ...current,
+      playlistUrl: nextPlaylistUrl,
+      playlistName: nextPlaylistName,
+      epgUrl: typeof epgUrl === 'string' ? epgUrl.trim() : current.epgUrl,
+      autoRefreshMinutes:
+        typeof autoRefreshMinutes === 'number' ? autoRefreshMinutes : current.autoRefreshMinutes,
+      adminPin:
+        typeof adminPin === 'string' && adminPin.trim() ? adminPin.trim() : current.adminPin,
+      customChannels: Array.isArray(customChannels) ? customChannels : current.customChannels,
+      disabledChannelIds: Array.isArray(disabledChannelIds)
+        ? disabledChannelIds
+        : current.disabledChannelIds,
+      appName: typeof appName === 'string' ? appName.trim() : current.appName,
+      appLogo: typeof appLogo === 'string' ? appLogo.trim() : current.appLogo,
+      appTagline: typeof appTagline === 'string' ? appTagline.trim() : current.appTagline,
+      primaryColor: typeof primaryColor === 'string' ? primaryColor.trim() : current.primaryColor,
+      accentColor: typeof accentColor === 'string' ? accentColor.trim() : current.accentColor,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    const saved = await writeConfig(updated, req.user?.uid ?? null);
+    const { adminPin: _pin, ...safeUpdated } = saved;
+    res.json({ success: true, config: { ...safeUpdated, hasPin: !!_pin } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to save configuration' });
   }
 });
 
-// API: Fetch playlist via backend to bypass browser CORS
-app.get('/api/fetch-playlist', async (req: Request, res: Response) => {
-  const config = readConfig();
-  const queryUrl = (req.query.url as string) || config.playlistUrl;
+// API: Authenticated User Sync Endpoints (PostgreSQL backed, Firebase Auth protected)
+// Note: Playlist management is admin-only; public users only sync favorites and watch history.
+app.get('/api/user/sync', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const data = await getUserDataFromDb(req.user!.uid);
+    res.json({
+      favoriteChannelIds: data.favoriteChannelIds,
+      recentChannelIds: data.recentChannelIds,
+      activeChannelId: data.activeChannelId,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to load user data' });
+  }
+});
+
+app.post('/api/user/favorites', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { channelId, isFavorite, channelName } = req.body && typeof req.body === 'object' ? req.body : {};
+  if (!channelId || typeof channelId !== 'string') {
+    return res.status(400).json({ error: 'channelId is required' });
+  }
+  try {
+    await toggleUserFavoriteInDb(req.user!.uid, channelId, Boolean(isFavorite), channelName);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to update favorite' });
+  }
+});
+
+app.post('/api/user/playlists', requireAuth, (_req: AuthRequest, res: Response) => {
+  return res.status(403).json({ error: 'Playlist updates are managed by the site administrator.' });
+});
+
+app.delete('/api/user/playlists/:id', requireAuth, (_req: AuthRequest, res: Response) => {
+  return res.status(403).json({ error: 'Playlist updates are managed by the site administrator.' });
+});
+
+app.post('/api/user/recents', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { recentChannelIds, activeChannelId } = req.body && typeof req.body === 'object' ? req.body : {};
+  if (!Array.isArray(recentChannelIds)) {
+    return res.status(400).json({ error: 'recentChannelIds array is required' });
+  }
+  try {
+    await saveUserRecentsInDb(
+      req.user!.uid,
+      recentChannelIds.filter((id) => typeof id === 'string').slice(0, 20),
+      typeof activeChannelId === 'string' ? activeChannelId : undefined
+    );
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to save watch history' });
+  }
+});
+
+// API: Fetch admin-configured playlist via backend to bypass browser CORS
+app.get('/api/fetch-playlist', optionalAuth, async (req: AuthRequest, res: Response) => {
+  const config = await readConfig();
+  const requestedUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+  let queryUrl = config.playlistUrl;
+
+  if (requestedUrl && requestedUrl !== config.playlistUrl) {
+    if (!(await isAdminRequestAuthorized(req))) {
+      return res.status(403).json({ error: 'Only the site administrator can load custom playlist URLs.' });
+    }
+    queryUrl = requestedUrl;
+  }
 
   if (!queryUrl) {
     return res.status(400).json({ error: 'No playlist URL provided or configured.' });
@@ -390,7 +536,7 @@ app.get('/api/fetch-playlist', async (req: Request, res: Response) => {
     const channelCount = extinfMatches ? extinfMatches.length : 0;
     
     if (queryUrl === config.playlistUrl) {
-      persistSyncStatus(
+      await persistSyncStatus(
         queryUrl,
         'ok',
         `Loaded ${channelCount} channels at ${new Date().toLocaleTimeString()}`,
@@ -403,7 +549,7 @@ app.get('/api/fetch-playlist', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('Error fetching playlist:', err);
     if (queryUrl === config.playlistUrl) {
-      persistSyncStatus(queryUrl, 'error', err.message || 'Network request failed');
+      await persistSyncStatus(queryUrl, 'error', err.message || 'Network request failed');
     }
     res.status(502).json({ error: err.message || 'Failed to download playlist' });
   }
@@ -411,7 +557,7 @@ app.get('/api/fetch-playlist', async (req: Request, res: Response) => {
 
 // API: Fetch EPG (XMLTV) via backend to bypass browser CORS
 app.get('/api/fetch-epg', async (req: Request, res: Response) => {
-  const config = readConfig();
+  const config = await readConfig();
   const queryUrl = (req.query.url as string) || config.epgUrl;
 
   if (!queryUrl) {
@@ -459,8 +605,8 @@ app.get('/api/fetch-epg', async (req: Request, res: Response) => {
 });
 
 // API: Test external playlist URL
-app.post('/api/test-playlist', async (req: Request, res: Response) => {
-  if (!isAdminTokenValid(extractAdminToken(req))) {
+app.post('/api/test-playlist', optionalAuth, async (req: AuthRequest, res: Response) => {
+  if (!(await isAdminRequestAuthorized(req))) {
     return res.status(401).json({ success: false, error: 'Admin authentication required' });
   }
   const { url } = (req.body && typeof req.body === 'object' ? req.body : {});

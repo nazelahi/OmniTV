@@ -175,7 +175,7 @@ export const SAMPLE_PLAYLIST_PRESETS = [
   },
   {
     title: 'BDIX IPTV (Default Playlist)',
-    desc: 'Default remote M3U playlist loaded automatically when no custom URL is configured in Admin Panel.',
+    desc: 'Default remote M3U playlist loaded automatically when no custom URL is configured.',
     url: DEFAULT_PLAYLIST_URL,
     channelCount: 0,
   },

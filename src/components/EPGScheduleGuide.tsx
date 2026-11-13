@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Clock, Play, Sparkles, Tv, Info, Search, X, Settings, ExternalLink } from 'lucide-react';
+import { Clock, Play, Sparkles, Tv, Info, Search, X, ExternalLink } from 'lucide-react';
 import { Channel, EPGProgram } from '../types/playlist';
 import { getChannelSchedule, withLiveTiming } from '../utils/epgGenerator';
 import { getProgramPoster, generateDynamicPosterSvg } from '../utils/posterService';
@@ -13,7 +13,6 @@ interface EPGScheduleGuideProps {
   onToggleFavorite: (channelId: string) => void;
   epgUrl?: string;
   epgData?: Map<string, EPGProgram[]> | null;
-  onOpenAdmin?: () => void;
 }
 
 export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
@@ -23,7 +22,6 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
   onToggleFavorite,
   epgUrl,
   epgData,
-  onOpenAdmin,
 }) => {
   const [selectedProgram, setSelectedProgram] = useState<{ program: EPGProgram; channel: Channel } | null>(null);
   const [searchFilter, setSearchFilter] = useState<string>('');
@@ -167,17 +165,6 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
             <Info className="w-3 h-3 text-neutral-400" />
             <span>How Guide Works</span>
           </button>
-
-          {onOpenAdmin && (
-            <button
-              type="button"
-              onClick={onOpenAdmin}
-              className="flex items-center gap-1 px-2.5 py-1 text-[11px] text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/50 border border-rose-800/50 rounded-lg transition-colors font-medium"
-            >
-              <Settings className="w-3 h-3" />
-              <span>Change Guide URL</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -450,20 +437,20 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
               <div className="p-3 bg-neutral-950/80 rounded-xl border border-neutral-800">
                 <h4 className="font-bold text-white text-xs mb-1 flex items-center gap-1.5">
                   <span className="w-4 h-4 rounded-full bg-rose-600 text-white font-mono text-[10px] flex items-center justify-center">1</span>
-                  <span>From Your M3U Playlist Header</span>
+                  <span>Broadcast Playlist Header</span>
                 </h4>
                 <p className="text-neutral-400 text-[11px]">
-                  When you provide an M3U playlist URL, the parser automatically checks the first header line for <code className="text-rose-300 font-mono">x-tvg-url="..."</code> or <code className="text-rose-300 font-mono">url-tvg="..."</code>. If your IPTV provider included their XMLTV link there, it is loaded automatically.
+                  The guide parser automatically checks the active broadcast lineup header for <code className="text-rose-300 font-mono">x-tvg-url="..."</code> or <code className="text-rose-300 font-mono">url-tvg="..."</code> links and syncs schedules automatically.
                 </p>
               </div>
 
               <div className="p-3 bg-neutral-950/80 rounded-xl border border-neutral-800">
                 <h4 className="font-bold text-white text-xs mb-1 flex items-center gap-1.5">
                   <span className="w-4 h-4 rounded-full bg-rose-600 text-white font-mono text-[10px] flex items-center justify-center">2</span>
-                  <span>Direct XMLTV Guide URL (Admin Panel)</span>
+                  <span>Configured XMLTV Guide Sources</span>
                 </h4>
                 <p className="text-neutral-400 text-[11px]">
-                  You can specify any custom XML or XMLTV guide URL directly in the <strong>Admin Panel</strong> under the <em>Primary Playlist URL</em> tab. OmniStream stores this setting and links programs by channel <code className="text-rose-300 font-mono">tvg-id</code>.
+                  When a site-wide XMLTV guide is configured, OmniStream matches live and upcoming shows directly to channels by <code className="text-rose-300 font-mono">tvg-id</code>.
                 </p>
               </div>
 
@@ -492,17 +479,6 @@ export const EPGScheduleGuide: React.FC<EPGScheduleGuideProps> = ({
               >
                 Close
               </button>
-              {onOpenAdmin && (
-                <button
-                  onClick={() => {
-                    setShowSourceInfo(false);
-                    onOpenAdmin();
-                  }}
-                  className="px-4 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-lg"
-                >
-                  Configure in Admin Panel
-                </button>
-              )}
             </div>
           </div>
         </div>
