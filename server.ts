@@ -1,4 +1,5 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import dns from 'dns/promises';
@@ -525,22 +526,34 @@ app.use('/api', (err: any, _req: Request, res: Response, _next: any) => {
 
 // Mount Vite or static dist without blocking /api readiness
 async function startServer() {
-  const isDev = process.env.NODE_ENV !== 'production';
+  const distPath = path.resolve(__dirname, 'dist');
+  const isProd = process.env.NODE_ENV === 'production';
 
-  if (isDev) {
+  let useVite = !isProd;
+  if (useVite) {
+    try {
+      await import.meta.resolve?.('vite');
+    } catch {
+      useVite = false;
+    }
+  }
+
+  if (useVite) {
     let viteMiddleware: any = null;
-    const viteReady = import('vite').then(({ createServer: createViteServer }) =>
-      createViteServer({
-        server: {
-          middlewareMode: true,
-          port: Number(PORT),
-          host: '0.0.0.0',
-        },
-        appType: 'spa',
-      }).then((vite) => {
+    const viteReady = import('vite')
+      .then(({ createServer: createViteServer }) =>
+        createViteServer({
+          server: {
+            middlewareMode: true,
+            port: Number(PORT),
+            host: '0.0.0.0',
+          },
+          appType: 'spa',
+        })
+      )
+      .then((vite) => {
         viteMiddleware = vite.middlewares;
-      })
-    );
+      });
 
     app.use(async (req, res, next) => {
       if (!viteMiddleware) {
@@ -549,15 +562,14 @@ async function startServer() {
       return viteMiddleware(req, res, next);
     });
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response) => {
+    app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }
 
   app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`[OmniStream TV] Server running on port ${PORT} (${isDev ? 'development' : 'production'})`);
+    console.log(`[OmniStream TV] Server running on port ${PORT} (${useVite ? 'development' : 'production'})`);
   });
 }
 

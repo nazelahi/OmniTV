@@ -166,6 +166,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setPinInput('');
       } else if (data?.error) {
         setPinError(data.error);
+      } else if (res.status === 404) {
+        setPinError('Admin backend API (/api/verify-pin) returned HTTP 404. If viewing a shared static link, open the live app server or re-share after restarting.');
       } else if (!res.ok) {
         setPinError(`Server error (HTTP ${res.status}). Please try again.`);
       } else {
